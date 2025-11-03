@@ -1,186 +1,143 @@
-# 채팅 서버 테스트 클라이언트
+# 채팅 테스트 클라이언트 (Vue.js)
 
-Spring Boot 기반 채팅 서버를 테스트하기 위한 웹 클라이언트입니다.
+Spring Boot 채팅 서버 테스트용 Vue.js 프론트엔드 클라이언트입니다.
 
-## 📁 프로젝트 구조
+## 🚀 기술 스택
 
-```
-.
-├── chat-test.html              # 메인 테스트 클라이언트
-├── serve.py                    # 간단한 HTTP 서버
-├── README.md                   # 프로젝트 설명
-├── QUICKSTART.md               # 빠른 시작 가이드
-├── CORS_TROUBLESHOOTING.md     # CORS 문제 해결
-├── DIAGNOSIS.md                # 문제 진단 체크리스트
-├── DTO_STRUCTURE.md            # DTO 구조 문서
-├── server/                     # 서버 설정 파일들
-│   ├── WebConfig.java
-│   ├── SecurityConfig.java
-│   ├── StompWebSocketConfig.java
-│   └── ChatSaverExample.java
-└── .gitignore
-```
+- **Vue 3** - Composition API 사용
+- **Vite** - 빠른 개발 서버 및 빌드 도구
+- **SockJS** - WebSocket 폴백 지원
+- **STOMP** - 메시징 프로토콜
 
-## 🚀 빠른 시작
-
-### 1. 서버 설정
-
-`server/` 폴더의 Java 파일들을 Spring Boot 프로젝트에 적용하세요.
-
-**중요 파일:**
-- `WebConfig.java` - CORS 설정 (필수)
-- `StompWebSocketConfig.java` - WebSocket 설정 수정
-- `SecurityConfig.java` - Spring Security 통합
-
-### 2. HTTP 서버 실행
+## 📦 설치 방법
 
 ```bash
-python3 serve.py
+# 의존성 설치
+npm install
 ```
 
-### 3. 브라우저에서 열기
+## 🎯 실행 방법
 
+```bash
+# 개발 서버 실행 (http://localhost:3000)
+npm run dev
+
+# 프로덕션 빌드
+npm run build
+
+# 빌드 미리보기
+npm run preview
 ```
-http://localhost:8000/chat-test.html
-```
 
-### 4. 테스트
+## 🔧 사용 방법
 
-1. "회원가입" 버튼으로 계정 생성
-2. 로그인
-3. 채팅방 생성
-4. 다른 브라우저 창에서 다른 계정으로 접속
-5. 실시간 채팅 테스트
+### 1. 서버 연결
+- 서버 URL에 백엔드 서버 주소 입력 (기본값: `http://localhost:8080`)
+- 이메일과 비밀번호 입력 후 로그인
 
-## 📖 자세한 가이드
+### 2. 회원가입
+- "회원가입" 버튼 클릭
+- 일반 회원 또는 기업 회원 선택
+- 필수 정보 입력 후 가입
+- 가입 성공 시 자동 로그인
 
-- **5분 안내:** [QUICKSTART.md](QUICKSTART.md)
-- **CORS 문제:** [CORS_TROUBLESHOOTING.md](CORS_TROUBLESHOOTING.md)
-- **진단 가이드:** [DIAGNOSIS.md](DIAGNOSIS.md)
-- **DTO 구조:** [DTO_STRUCTURE.md](DTO_STRUCTURE.md)
+### 3. 채팅방 생성
+- 좌측 사이드바에서 "상대방 ID" 입력
+- "1:1 채팅방 만들기" 버튼 클릭
+- 생성된 채팅방이 목록에 표시됨
 
-## ✨ 주요 기능
+### 4. 메시지 전송
+- 채팅방 목록에서 원하는 채팅방 선택
+- 하단 입력창에 메시지 입력 후 Enter 또는 "전송" 버튼 클릭
+- 실시간으로 메시지 송수신
 
-### 프론트엔드
-- ✅ 이메일/비밀번호 기반 회원가입/로그인
-- ✅ JWT 토큰 인증
-- ✅ WebSocket 실시간 채팅
-- ✅ 1:1 채팅방 생성
-- ✅ 메시지 읽음 처리
-- ✅ 채팅방 목록 조회
-- ✅ 이전 메시지 불러오기
+### 5. 채팅방 나가기
+- 우측 상단 "나가기" 버튼 클릭
+- 확인 후 채팅방 목록에서 제거됨
 
-### 서버 연동
-- ✅ REST API 연동 (로그인, 채팅방 관리)
-- ✅ STOMP over WebSocket
-- ✅ JWT 토큰 기반 인증
+## 📝 주요 기능
 
-## 🔧 트러블슈팅
+- ✅ 실시간 WebSocket 통신 (SockJS + STOMP)
+- ✅ JWT 기반 인증
+- ✅ 1:1 개인 채팅방 생성
+- ✅ 읽지 않은 메시지 카운트 표시
+- ✅ 메시지 히스토리 로딩
+- ✅ 자동 스크롤
+- ✅ 반응형 UI (WhatsApp 스타일)
+- ✅ 일반/기업 회원가입 지원
 
-### 로그인 실패 (Failed to fetch)
+## 🔗 백엔드 API 엔드포인트
 
-**원인:** CORS 설정 문제
+### 인증
+- `POST /v1/auth/login` - 로그인
+- `POST /v1/auth/signup/individual` - 일반 회원가입
+- `POST /v1/auth/signup/company/{companyId}` - 기업 회원가입
 
-**해결:**
-1. `server/WebConfig.java`를 프로젝트에 추가
-2. `server/SecurityConfig.java` 참고하여 수정
-3. 서버 재시작
-4. HTTP 서버로 HTML 파일 열기
-
-👉 [CORS_TROUBLESHOOTING.md](CORS_TROUBLESHOOTING.md) 참고
-
-### WebSocket 연결 실패
-
-**원인:** WebSocket CORS 설정 문제
-
-**해결:**
-1. `StompWebSocketConfig.java`에서 `.setAllowedOriginPatterns("*")` 설정
-2. 서버 재시작
-
-### 메시지 수신 안 됨
-
-**원인:** 서버 destination 경로 불일치
-
-**해결:**
-1. `ChatSaver.sendMessage()`의 destination 확인
-2. 프론트엔드 구독 경로와 일치하는지 확인
-
-👉 [DIAGNOSIS.md](DIAGNOSIS.md) 참고
-
-## 📋 API 엔드포인트
-
-### REST API
-```
-POST   /v1/auth/signup/individual       # 일반 회원가입
-POST   /v1/auth/signup/company/{id}     # 기업 회원가입
-POST   /v1/auth/login                   # 로그인
-POST   /v1/chat/private                 # 채팅방 생성
-GET    /v1/chat/rooms/me                # 채팅방 목록
-GET    /v1/chat/rooms/{id}/messages     # 메시지 조회
-POST   /v1/chat/rooms/{id}/read         # 읽음 처리
-DELETE /v1/chat/rooms/{id}              # 채팅방 나가기
-```
+### 채팅
+- `POST /v1/chat/private?otherMemberId={id}` - 1:1 채팅방 생성
+- `GET /v1/chat/rooms/me` - 내 채팅방 목록 조회
+- `GET /v1/chat/rooms/{roomId}/messages` - 채팅방 메시지 조회
+- `POST /v1/chat/rooms/{roomId}/read` - 메시지 읽음 처리
+- `DELETE /v1/chat/rooms/{roomId}` - 채팅방 나가기
 
 ### WebSocket
+- **연결**: `/connect`
+- **구독**: `/topic/chat/room/{roomId}`
+- **발행**: `/publish/{roomId}`
+
+## 🎨 프로젝트 구조
+
 ```
-WS     /connect                         # WebSocket 연결
-STOMP  /publish/{roomId}                # 메시지 전송
-STOMP  /topic/chat/room/{roomId}        # 메시지 구독
+chat-test-client/
+├── index.html              # HTML 엔트리 포인트
+├── package.json            # 프로젝트 의존성
+├── vite.config.js          # Vite 설정
+└── src/
+    ├── main.js             # Vue 앱 초기화
+    ├── App.vue             # 메인 컴포넌트
+    └── style.css           # 전역 스타일
 ```
 
-## 🛠 기술 스택
+## 🔒 환경 변수
 
-### 프론트엔드
-- HTML5 + CSS3 + Vanilla JavaScript
-- SockJS (WebSocket polyfill)
-- STOMP.js (WebSocket 메시징)
+필요시 `.env` 파일을 생성하여 기본 서버 URL을 설정할 수 있습니다:
 
-### 서버 (예상)
-- Spring Boot
-- Spring WebSocket
-- Spring Security + JWT
-- STOMP over WebSocket
+```env
+VITE_API_URL=http://localhost:8080
+```
 
-## 📝 설정 체크리스트
+## 🐛 트러블슈팅
 
-서버 측:
-- [ ] `WebConfig.java` 추가
-- [ ] `SecurityConfig.java` 수정
-- [ ] `StompWebSocketConfig.java` 수정
-- [ ] `ChatSaver` destination 경로 확인
-- [ ] 서버 재시작
+### CORS 오류
+백엔드 서버에서 CORS 설정을 확인하세요:
+```java
+@Configuration
+public class WebConfig {
+    @Bean
+    public WebMvcConfigurer corsConfigurer() {
+        return new WebMvcConfigurer() {
+            @Override
+            public void addCorsMappings(CorsRegistry registry) {
+                registry.addMapping("/**")
+                        .allowedOrigins("http://localhost:3000")
+                        .allowedMethods("*")
+                        .allowedHeaders("*")
+                        .allowCredentials(true);
+            }
+        };
+    }
+}
+```
 
-클라이언트 측:
-- [ ] HTTP 서버로 HTML 서빙
-- [ ] 브라우저 캐시 클리어
-- [ ] F12 콘솔에서 에러 확인
-
-## 🔐 보안 고려사항
-
-⚠️ 이 프로젝트는 **개발/테스트 목적**으로 설계되었습니다.
-
-**프로덕션 환경에서는:**
-- CORS를 특정 origin으로 제한
-- HTTPS 사용
-- 토큰을 안전하게 저장 (HttpOnly 쿠키 등)
-- 입력 값 검증 강화
-- Rate limiting 적용
+### WebSocket 연결 실패
+1. 백엔드 서버가 실행 중인지 확인
+2. 서버 URL이 올바른지 확인
+3. 브라우저 콘솔(F12)에서 에러 로그 확인
 
 ## 📄 라이선스
 
-이 프로젝트는 테스트 목적으로 만들어졌습니다.
+MIT License
 
-## 🤝 기여
+## 👨‍💻 개발자
 
-버그 리포트나 개선 제안은 이슈로 등록해주세요.
-
-## 📞 지원
-
-문제가 발생하면:
-1. [DIAGNOSIS.md](DIAGNOSIS.md)로 자가 진단
-2. [CORS_TROUBLESHOOTING.md](CORS_TROUBLESHOOTING.md)로 CORS 문제 해결
-3. 브라우저 콘솔(F12)과 서버 로그 확인
-
----
-
-**Made for testing Spring Boot chat server** 🚀
+- GitHub: [@deehyeon](https://github.com/deehyeon)
