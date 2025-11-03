@@ -9,19 +9,28 @@ Spring Boot 채팅 서버 테스트용 Vue.js 프론트엔드 클라이언트입
 - **SockJS** - WebSocket 폴백 지원
 - **STOMP** - 메시징 프로토콜
 
-## 📦 설치 방법
+## 📦 설치 및 실행 방법
 
+### 1. 저장소 클론
 ```bash
-# 의존성 설치
+git clone https://github.com/deehyeon/chat-test-client.git
+cd chat-test-client
+```
+
+### 2. 의존성 설치
+```bash
 npm install
 ```
 
-## 🎯 실행 방법
-
+### 3. 개발 서버 실행
 ```bash
-# 개발 서버 실행 (http://localhost:3000)
 npm run dev
+```
 
+브라우저에서 http://localhost:3000 으로 접속하세요.
+
+### 기타 명령어
+```bash
 # 프로덕션 빌드
 npm run build
 
@@ -29,31 +38,56 @@ npm run build
 npm run preview
 ```
 
+## ⚠️ 주의사항
+
+### 백엔드 서버가 먼저 실행되어 있어야 합니다!
+- 기본 서버 주소: `http://localhost:8080`
+- 백엔드 서버가 실행 중이지 않으면 로그인/회원가입이 작동하지 않습니다.
+
+### CORS 설정 확인
+백엔드 서버에서 다음과 같이 CORS를 허용해야 합니다:
+```java
+@Configuration
+public class WebConfig implements WebMvcConfigurer {
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/**")
+                .allowedOrigins("http://localhost:3000")
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true);
+    }
+}
+```
+
 ## 🔧 사용 방법
 
-### 1. 서버 연결
-- 서버 URL에 백엔드 서버 주소 입력 (기본값: `http://localhost:8080`)
-- 이메일과 비밀번호 입력 후 로그인
+### 1. 회원가입
+1. "회원가입" 버튼 클릭
+2. 일반 회원 또는 기업 회원 선택
+3. 필수 정보 입력 후 "가입하기"
+4. 가입 성공 시 자동 로그인됩니다
 
-### 2. 회원가입
-- "회원가입" 버튼 클릭
-- 일반 회원 또는 기업 회원 선택
-- 필수 정보 입력 후 가입
-- 가입 성공 시 자동 로그인
+### 2. 로그인
+1. 서버 URL 확인 (기본값: `http://localhost:8080`)
+2. 이메일과 비밀번호 입력
+3. "로그인" 버튼 클릭
+4. WebSocket 연결이 자동으로 이루어집니다
 
 ### 3. 채팅방 생성
-- 좌측 사이드바에서 "상대방 ID" 입력
-- "1:1 채팅방 만들기" 버튼 클릭
-- 생성된 채팅방이 목록에 표시됨
+1. 좌측 사이드바에서 "상대방 ID" 입력
+2. "1:1 채팅방 만들기" 버튼 클릭
+3. 생성된 채팅방이 목록에 표시됩니다
 
 ### 4. 메시지 전송
-- 채팅방 목록에서 원하는 채팅방 선택
-- 하단 입력창에 메시지 입력 후 Enter 또는 "전송" 버튼 클릭
-- 실시간으로 메시지 송수신
+1. 채팅방 목록에서 원하는 채팅방 클릭
+2. 하단 입력창에 메시지 입력
+3. Enter 키 또는 "전송" 버튼으로 전송
+4. 실시간으로 메시지가 표시됩니다
 
 ### 5. 채팅방 나가기
-- 우측 상단 "나가기" 버튼 클릭
-- 확인 후 채팅방 목록에서 제거됨
+1. 채팅방 선택 후 우측 상단 "나가기" 버튼 클릭
+2. 확인 후 채팅방에서 나갑니다
 
 ## 📝 주요 기능
 
@@ -65,6 +99,7 @@ npm run preview
 - ✅ 자동 스크롤
 - ✅ 반응형 UI (WhatsApp 스타일)
 - ✅ 일반/기업 회원가입 지원
+- ✅ 채팅방 나가기 기능
 
 ## 🔗 백엔드 API 엔드포인트
 
@@ -92,39 +127,41 @@ chat-test-client/
 ├── index.html              # HTML 엔트리 포인트
 ├── package.json            # 프로젝트 의존성
 ├── vite.config.js          # Vite 설정
+├── .gitignore             # Git 제외 파일
+├── README.md              # 프로젝트 문서
 └── src/
     ├── main.js             # Vue 앱 초기화
-    ├── App.vue             # 메인 컴포넌트
+    ├── App.vue             # 메인 채팅 컴포넌트
     └── style.css           # 전역 스타일
 ```
 
-## 🔒 환경 변수
-
-필요시 `.env` 파일을 생성하여 기본 서버 URL을 설정할 수 있습니다:
-
-```env
-VITE_API_URL=http://localhost:8080
-```
-
 ## 🐛 트러블슈팅
+
+### 화면이 표시되지 않는 경우
+1. **의존성 설치 확인**
+   ```bash
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
+
+2. **포트 확인**
+   - 기본 포트 3000이 사용 중인지 확인
+   - 다른 포트로 변경하려면 `vite.config.js` 수정
+
+3. **브라우저 콘솔 확인**
+   - F12를 눌러 개발자 도구 열기
+   - Console 탭에서 에러 메시지 확인
 
 ### CORS 오류
 백엔드 서버에서 CORS 설정을 확인하세요:
 ```java
 @Configuration
-public class WebConfig {
-    @Bean
-    public WebMvcConfigurer corsConfigurer() {
-        return new WebMvcConfigurer() {
-            @Override
-            public void addCorsMappings(CorsRegistry registry) {
-                registry.addMapping("/**")
-                        .allowedOrigins("http://localhost:3000")
-                        .allowedMethods("*")
-                        .allowedHeaders("*")
-                        .allowCredentials(true);
-            }
-        };
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+    @Override
+    public void registerStompEndpoints(StompEndpointRegistry registry) {
+        registry.addEndpoint("/connect")
+                .setAllowedOrigins("http://localhost:3000")
+                .withSockJS();
     }
 }
 ```
@@ -132,7 +169,29 @@ public class WebConfig {
 ### WebSocket 연결 실패
 1. 백엔드 서버가 실행 중인지 확인
 2. 서버 URL이 올바른지 확인
-3. 브라우저 콘솔(F12)에서 에러 로그 확인
+3. WebSocket 엔드포인트(`/connect`)가 올바른지 확인
+4. 브라우저 콘솔(F12)에서 에러 로그 확인
+
+### 로그인이 안 되는 경우
+1. 백엔드 서버가 실행 중인지 확인
+2. 서버 URL이 올바른지 확인
+3. 이메일과 비밀번호가 올바른지 확인
+4. 네트워크 탭에서 API 응답 확인
+
+## 💡 개발 팁
+
+### 서버 URL 변경
+화면 좌측 상단의 "서버 URL" 입력창에서 변경 가능합니다.
+
+### 디버그 로그 활성화
+`src/App.vue`에서 다음 라인을 수정:
+```javascript
+// 현재: stompClient.debug = null
+// 변경: stompClient.debug = (msg) => console.log(msg)
+```
+
+### 개발 중 Hot Reload
+Vite는 파일 변경 시 자동으로 새로고침됩니다.
 
 ## 📄 라이선스
 
