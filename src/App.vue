@@ -167,7 +167,7 @@
 <script setup>
 import { ref, computed, nextTick, onUnmounted } from 'vue'
 import SockJS from 'sockjs-client'
-import { Client } from '@stomp/stompjs'
+import Stomp from 'stompjs'
 
 const serverUrl = ref('http://localhost:8080')
 const email = ref('')
@@ -256,28 +256,27 @@ const login = async () => {
 
 const connectWebSocket = () => {
   const socket = new SockJS(serverUrl.value + '/connect')
+  stompClient = Stomp.over(socket)
   
-  stompClient = new Client({
-    webSocketFactory: () => socket,
-    connectHeaders: {
-      'Authorization': 'Bearer ' + accessToken.value
-    },
-    debug: (str) => {
-      console.log(str)
-    },
-    onConnect: (frame) => {
+  // 디버그 로그 비활성화 (필요시 활성화)
+  stompClient.debug = null
+  
+  const headers = {
+    'Authorization': 'Bearer ' + accessToken.value
+  }
+  
+  stompClient.connect(headers, 
+    function(frame) {
       console.log('WebSocket 연결 성공:', frame)
       isConnected.value = true
       loadRooms()
     },
-    onStompError: (frame) => {
-      console.error('STOMP 오류:', frame)
+    function(error) {
+      console.error('WebSocket 연결 오류:', error)
       isConnected.value = false
       alert('WebSocket 연결에 실패했습니다. 서버가 실행 중인지 확인해주세요.')
     }
-  })
-
-  stompClient.activate()
+  )
 }
 
 const signup = async () => {
@@ -342,8 +341,10 @@ const disconnect = () => {
   if (stompClient !== null) {
     if (subscription) {
       subscription.unsubscribe()
+      subscription = null
     }
-    stompClient.deactivate()
+    stompClient.disconnect()
+    stompClient = null
   }
   isConnected.value = false
   currentMemberId.value = null
@@ -470,10 +471,7 @@ const sendMessage = () => {
     timestamp: new Date().toISOString()
   }
 
-  stompClient.publish({
-    destination: `/publish/${currentRoomId.value}`,
-    body: JSON.stringify(message)
-  })
+  stompClient.send(`/publish/${currentRoomId.value}`, {}, JSON.stringify(message))
 
   messageInput.value = ''
 }
@@ -550,3 +548,7 @@ onUnmounted(() => {
   disconnect()
 })
 </script>
+
+<style scoped>
+/* App.vue의 스코프 스타일은 전역 style.css를 사용하므로 비워둡니다 */
+</style>
