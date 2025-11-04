@@ -141,7 +141,7 @@
         </div>
         <div class="form-group">
           <label>비밀번호</label>
-          <input v-model="signupForm.password" type="password" placeholder="비밀밀번호">
+          <input v-model="signupForm.password" type="password" placeholder="비밀번호">
         </div>
         <div class="form-group">
           <label>닉네임</label>
@@ -241,7 +241,10 @@ const login = async () => {
     accessToken.value = loginData.accessToken
     currentMemberId.value = loginData.memberId
 
-    console.log('토큰 저장 완료, WebSocket 연결 시도')
+    console.log('✅ 토큰 저장 완료:', accessToken.value ? '토큰 있음' : '토큰 없음')
+    console.log('✅ 회원 ID:', currentMemberId.value)
+    console.log('WebSocket 연결 시도 시작...')
+    
     connectWebSocket()
   } catch (error) {
     console.error('로그인 오류 상세:', error)
@@ -255,26 +258,44 @@ const login = async () => {
 }
 
 const connectWebSocket = () => {
+  // 토큰 확인
+  if (!accessToken.value) {
+    console.error('❌ accessToken이 없습니다!')
+    alert('토큰이 없어서 WebSocket 연결을 할 수 없습니다.')
+    return
+  }
+
+  console.log('🔌 WebSocket 연결 시작...')
+  console.log('서버 URL:', serverUrl.value + '/connect')
+  console.log('토큰:', accessToken.value.substring(0, 20) + '...')
+
   const socket = new SockJS(serverUrl.value + '/connect')
   stompClient = webstomp.over(socket)
   
-  // 디버그 로그 비활성화 (필요시 활성화)
-  stompClient.debug = false
+  // 디버그 로그 활성화 (문제 파악을 위해)
+  stompClient.debug = (msg) => {
+    console.log('🔍 STOMP Debug:', msg)
+  }
   
-  const headers = {
+  // STOMP CONNECT 헤더에 Authorization 추가
+  const connectHeaders = {
     'Authorization': 'Bearer ' + accessToken.value
   }
   
-  stompClient.connect(headers, 
+  console.log('📤 전송할 헤더:', connectHeaders)
+  
+  stompClient.connect(
+    connectHeaders,
     function(frame) {
-      console.log('WebSocket 연결 성공:', frame)
+      console.log('✅ WebSocket 연결 성공!')
+      console.log('Frame:', frame)
       isConnected.value = true
       loadRooms()
     },
     function(error) {
-      console.error('WebSocket 연결 오류:', error)
+      console.error('❌ WebSocket 연결 오류:', error)
       isConnected.value = false
-      alert('WebSocket 연결에 실패했습니다. 서버가 실행 중인지 확인해주세요.')
+      alert('WebSocket 연결에 실패했습니다.\n\n에러: ' + (error.headers?.message || error))
     }
   )
 }
