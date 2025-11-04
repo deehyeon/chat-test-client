@@ -211,6 +211,7 @@ const login = async () => {
   }
 
   try {
+    console.log('========== 로그인 시작 ==========')
     console.log('로그인 시도:', serverUrl.value + '/v1/auth/login')
     console.log('요청 데이터:', { email: email.value, password: '***' })
 
@@ -235,15 +236,45 @@ const login = async () => {
     }
 
     const data = await response.json()
-    console.log('로그인 성공 응답:', data)
+    console.log('========== 로그인 응답 전체 ==========')
+    console.log(JSON.stringify(data, null, 2))
+    
+    // 다양한 응답 구조 시도
+    console.log('========== 토큰 추출 시도 ==========')
+    console.log('data.result:', data.result)
+    console.log('data.result?.accessToken:', data.result?.accessToken)
+    console.log('data.accessToken:', data.accessToken)
+    console.log('data.token:', data.token)
+    console.log('data.result?.token:', data.result?.token)
+    
+    // 토큰 추출 (다양한 경로 시도)
+    let token = null
+    let memberId = null
+    
+    if (data.result) {
+      token = data.result.accessToken || data.result.token
+      memberId = data.result.memberId || data.result.id || data.result.userId
+    } else {
+      token = data.accessToken || data.token
+      memberId = data.memberId || data.id || data.userId
+    }
+    
+    console.log('========== 추출된 값 ==========')
+    console.log('추출된 토큰:', token)
+    console.log('추출된 memberId:', memberId)
+    
+    if (!token) {
+      console.error('❌ 토큰을 찾을 수 없습니다!')
+      alert('로그인 응답에서 토큰을 찾을 수 없습니다.\n\n서버 응답을 확인해주세요.\n\n콘솔(F12)을 열어 전체 응답을 확인하세요.')
+      return
+    }
+    
+    accessToken.value = token
+    currentMemberId.value = memberId
 
-    const loginData = data.result || data
-    accessToken.value = loginData.accessToken
-    currentMemberId.value = loginData.memberId
-
-    console.log('✅ 토큰 저장 완료:', accessToken.value ? '토큰 있음' : '토큰 없음')
+    console.log('✅ 토큰 저장 완료:', accessToken.value.substring(0, 30) + '...')
     console.log('✅ 회원 ID:', currentMemberId.value)
-    console.log('WebSocket 연결 시도 시작...')
+    console.log('========== WebSocket 연결 시도 ==========')
     
     connectWebSocket()
   } catch (error) {
@@ -267,14 +298,14 @@ const connectWebSocket = () => {
 
   console.log('🔌 WebSocket 연결 시작...')
   console.log('서버 URL:', serverUrl.value + '/connect')
-  console.log('토큰:', accessToken.value.substring(0, 20) + '...')
+  console.log('토큰 (앞 30자):', accessToken.value.substring(0, 30) + '...')
 
   const socket = new SockJS(serverUrl.value + '/connect')
   stompClient = webstomp.over(socket)
   
-  // 디버그 로그 활성화 (문제 파악을 위해)
+  // 디버그 로그 활성화
   stompClient.debug = (msg) => {
-    console.log('🔍 STOMP Debug:', msg)
+    console.log('🔍 STOMP:', msg)
   }
   
   // STOMP CONNECT 헤더에 Authorization 추가
@@ -282,7 +313,9 @@ const connectWebSocket = () => {
     'Authorization': 'Bearer ' + accessToken.value
   }
   
-  console.log('📤 전송할 헤더:', connectHeaders)
+  console.log('📤 전송할 헤더:', {
+    'Authorization': 'Bearer ' + accessToken.value.substring(0, 30) + '...'
+  })
   
   stompClient.connect(
     connectHeaders,
@@ -342,12 +375,29 @@ const signup = async () => {
     }
 
     const data = await response.json()
-    const signupData = data.result || data
+    console.log('회원가입 응답:', data)
+    
+    // 토큰 추출 (로그인과 동일한 방식)
+    let token = null
+    let memberId = null
+    
+    if (data.result) {
+      token = data.result.accessToken || data.result.token
+      memberId = data.result.memberId || data.result.id || data.result.userId
+    } else {
+      token = data.accessToken || data.token
+      memberId = data.memberId || data.id || data.userId
+    }
+
+    if (!token) {
+      alert('회원가입 응답에서 토큰을 찾을 수 없습니다.')
+      return
+    }
 
     alert('회원가입 성공! 자동으로 로그인됩니다.')
 
-    accessToken.value = signupData.accessToken
-    currentMemberId.value = signupData.memberId
+    accessToken.value = token
+    currentMemberId.value = memberId
     email.value = form.email
 
     showSignupModal.value = false
