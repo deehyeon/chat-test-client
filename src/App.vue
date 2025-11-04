@@ -238,7 +238,6 @@ const login = async () => {
     console.log('========== 로그인 응답 ==========')
     console.log(JSON.stringify(responseData, null, 2))
     
-    // 실제 응답 구조: { result: "SUCCESS", data: { tokenInfo, memberInfo }, error: null }
     const data = responseData.data
     if (!data) {
       console.error('❌ data가 없습니다!')
@@ -271,82 +270,79 @@ const login = async () => {
     console.log('✅ 회원 이름:', memberInfo.memberName)
     console.log('========== WebSocket 연결 시작 ==========')
     
-    connectWebSocket()
+    await connectWebSocket()
   } catch (error) {
     console.error('로그인 오류:', error)
     alert('로그인 중 오류가 발생했습니다: ' + error.message)
   }
 }
 
+// ✅ WebSocket 연결을 Promise로 감싸서 CONNECT 성공을 보장
 const connectWebSocket = () => {
-  if (!accessToken.value) {
-    console.error('❌ accessToken이 없습니다!')
-    alert('토큰이 없어서 WebSocket 연결을 할 수 없습니다.')
-    return
-  }
-
-  console.log('🔌 WebSocket 연결 중...')
-  console.log('서버:', serverUrl.value + '/connect')
-  console.log('토큰 (앞 20자):', accessToken.value.substring(0, 20) + '...')
-  console.log('헤더에 포함될 토큰:', 'Bearer ' + accessToken.value.substring(0, 20) + '...')
-
-  const socket = new SockJS(serverUrl.value + '/connect')
-  stompClient = webstomp.over(socket)
-  
-  // STOMP 디버그 로그 활성화
-  stompClient.debug = (msg) => {
-    console.log('🔍 STOMP:', msg)
-  }
-  
-  const connectHeaders = {
-    'Authorization': 'Bearer ' + accessToken.value
-  }
-  
-  console.log('📤 연결 헤더:', { Authorization: 'Bearer ' + accessToken.value.substring(0, 20) + '...' })
-  
-  stompClient.connect(
-    connectHeaders,
-    function(frame) {
-      console.log('✅ WebSocket 연결 성공!')
-      console.log('Frame:', frame)
-      isConnected.value = true
-      loadRooms()
-    },
-    function(error) {
-      console.error('❌ WebSocket 연결 실패')
-      console.error('Error 객체:', error)
-      console.error('Error type:', typeof error)
-      if (error && error.headers) {
-        console.error('Error headers:', error.headers)
-      }
-      if (error && error.body) {
-        console.error('Error body:', error.body)
-      }
-      isConnected.value = false
-      
-      let errorMessage = 'WebSocket 연결 실패'
-      if (error && error.headers && error.headers.message) {
-        errorMessage += ': ' + error.headers.message
-      } else if (error && typeof error === 'string') {
-        errorMessage += ': ' + error
-      } else if (error && error.toString) {
-        errorMessage += ': ' + error.toString()
-      }
-      
-      alert(errorMessage + '\n서버가 실행 중인지, CORS 설정이 올바른지 확인해주세요.')
+  return new Promise((resolve, reject) => {
+    if (!accessToken.value) {
+      console.error('❌ accessToken이 없습니다!')
+      alert('토큰이 없어서 WebSocket 연결을 할 수 없습니다.')
+      reject(new Error('No access token'))
+      return
     }
-  )
-  
-  // SockJS 이벤트 리스너 추가
-  socket.onclose = function(e) {
-    console.log('🔴 SockJS 연결 종료:', e)
-    console.log('Close code:', e.code)
-    console.log('Close reason:', e.reason)
-  }
-  
-  socket.onerror = function(e) {
-    console.error('🔴 SockJS 에러:', e)
-  }
+
+    console.log('🔌 WebSocket 연결 중...')
+    console.log('서버:', serverUrl.value + '/connect')
+    console.log('토큰 (앞 20자):', accessToken.value.substring(0, 20) + '...')
+
+    const socket = new SockJS(serverUrl.value + '/connect')
+    stompClient = webstomp.over(socket)
+    
+    stompClient.debug = (msg) => {
+      console.log('🔍 STOMP:', msg)
+    }
+    
+    const connectHeaders = {
+      'Authorization': 'Bearer ' + accessToken.value
+    }
+    
+    console.log('📤 CONNECT 헤더:', { Authorization: 'Bearer ...' })
+    
+    stompClient.connect(
+      connectHeaders,
+      function(frame) {
+        console.log('✅ WebSocket CONNECT 성공!')
+        console.log('Frame:', frame)
+        isConnected.value = true
+        
+        // CONNECT 성공 후 방 목록 로드
+        loadRooms()
+        resolve(frame)
+      },
+      function(error) {
+        console.error('❌ WebSocket CONNECT 실패')
+        console.error('Error:', error)
+        isConnected.value = false
+        
+        let errorMessage = 'WebSocket 연결 실패'
+        if (error && error.headers && error.headers.message) {
+          errorMessage += ': ' + error.headers.message
+        } else if (error && typeof error === 'string') {
+          errorMessage += ': ' + error
+        } else if (error && error.toString) {
+          errorMessage += ': ' + error.toString()
+        }
+        
+        alert(errorMessage + '\n서버가 실행 중인지, CORS 설정이 올바른지 확인해주세요.')
+        reject(error)
+      }
+    )
+    
+    socket.onclose = function(e) {
+      console.log('🔴 SockJS 연결 종료:', e.code, e.reason)
+      isConnected.value = false
+    }
+    
+    socket.onerror = function(e) {
+      console.error('🔴 SockJS 에러:', e)
+    }
+  })
 }
 
 const signup = async () => {
@@ -393,7 +389,6 @@ const signup = async () => {
     const responseData = await response.json()
     console.log('회원가입 응답:', responseData)
     
-    // 로그인과 동일한 구조로 토큰 추출
     const data = responseData.data
     if (!data || !data.tokenInfo || !data.memberInfo) {
       alert('회원가입 응답 형식이 올바르지 않습니다.')
@@ -406,7 +401,7 @@ const signup = async () => {
 
     alert('회원가입 성공! 자동으로 로그인됩니다.')
     showSignupModal.value = false
-    connectWebSocket()
+    await connectWebSocket()
   } catch (error) {
     console.error('회원가입 오류:', error)
     alert('회원가입 중 오류: ' + error.message)
@@ -430,6 +425,7 @@ const disconnect = () => {
   messages.value = []
 }
 
+// ✅ 방 생성 후 150ms 딜레이 + 자동 선택
 const createPrivateRoom = async () => {
   if (!otherMemberId.value) {
     alert('상대방 ID를 입력해주세요.')
@@ -441,7 +437,14 @@ const createPrivateRoom = async () => {
     return
   }
 
+  if (!isConnected.value || !stompClient) {
+    alert('WebSocket이 연결되지 않았습니다. 다시 로그인해주세요.')
+    return
+  }
+
   try {
+    console.log('💬 방 생성 시작...')
+    
     const response = await fetch(`${serverUrl.value}/v1/chat/private?otherMemberId=${otherMemberId.value}`, {
       method: 'POST',
       headers: {
@@ -450,15 +453,32 @@ const createPrivateRoom = async () => {
       }
     })
 
-    if (response.ok) {
-      const data = await response.json()
-      const roomId = data.data || data.result || data
-      alert(`채팅방이 생성되었습니다. Room ID: ${roomId}`)
-      loadRooms()
-    } else {
+    if (!response.ok) {
       const errorData = await response.json()
       alert('채팅방 생성 실패: ' + (errorData.message || '오류 발생'))
+      return
     }
+
+    const data = await response.json()
+    const roomId = data.data || data.result || data
+    console.log('✅ 방 생성 성공! Room ID:', roomId)
+    
+    // 확실하게 방 목록 새로고침
+    await loadRooms()
+    
+    // 150ms 딜레이 후 새로 만들어진 방을 자동으로 선택
+    console.log('⏱️ 150ms 딜레이 후 방 선택...')
+    setTimeout(() => {
+      const newRoom = rooms.value.find(r => r.roomId === roomId)
+      if (newRoom) {
+        console.log('🎯 새 방 선택:', newRoom)
+        selectRoom(newRoom)
+      } else {
+        console.warn('⚠️ 새로 만들어진 방을 찾을 수 없습니다.')
+        alert(`채팅방이 생성되었습니다. Room ID: ${roomId}`)
+      }
+    }, 150)
+    
   } catch (error) {
     console.error('Error:', error)
     alert('채팅방 생성 중 오류가 발생했습니다.')
@@ -480,6 +500,7 @@ const loadRooms = async () => {
     if (response.ok) {
       const responseData = await response.json()
       rooms.value = responseData.data?.content || responseData.result?.content || responseData.content || []
+      console.log('📋 방 목록 로드 완료:', rooms.value.length, '개')
     } else {
       console.error('채팅방 목록을 불러올 수 없습니다.')
     }
@@ -488,20 +509,47 @@ const loadRooms = async () => {
   }
 }
 
+// ✅ SUBSCRIBE 시 STOMP 연결 상태 확인
 const selectRoom = (room) => {
+  // STOMP 연결 상태 확인
+  if (!stompClient || !isConnected.value) {
+    console.error('❌ STOMP 클라이언트가 연결되지 않았습니다!')
+    alert('WebSocket 연결이 끔어졌습니다. 다시 로그인해주세요.')
+    return
+  }
+
+  console.log('👉 방 선택:', room.roomId)
+  
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
 
+  // 기존 구독 해제
   if (subscription) {
+    console.log('🔴 기존 구독 해제')
     subscription.unsubscribe()
+    subscription = null
   }
 
-  subscription = stompClient.subscribe(`/topic/chat/room/${room.roomId}`, (message) => {
-    const chatMessage = JSON.parse(message.body)
-    messages.value.push(chatMessage)
-    nextTick(() => scrollToBottom())
-  })
+  // ✅ SUBSCRIBE: CONNECT 성공 후에만 호출됨
+  const subscriptionPath = `/topic/chat/room/${room.roomId}`
+  console.log('📡 SUBSCRIBE 시도:', subscriptionPath)
+  
+  try {
+    subscription = stompClient.subscribe(subscriptionPath, (message) => {
+      console.log('📩 메시지 수신:', message.body)
+      const chatMessage = JSON.parse(message.body)
+      messages.value.push(chatMessage)
+      nextTick(() => scrollToBottom())
+    })
+    
+    console.log('✅ SUBSCRIBE 성공!')
+  } catch (error) {
+    console.error('❌ SUBSCRIBE 실패:', error)
+    alert('채팅방 구독에 실패했습니다: ' + error.message)
+    return
+  }
 
+  // 메시지 로드
   loadMessages(room.roomId)
 }
 
@@ -522,6 +570,7 @@ const loadMessages = async (roomId) => {
       const messageList = responseData.data?.content || responseData.result?.content || responseData.content || []
 
       messages.value = messageList.reverse()
+      console.log('📨 메시지 로드 완료:', messages.value.length, '개')
 
       nextTick(() => scrollToBottom())
       markAsRead(roomId)
@@ -540,27 +589,35 @@ const sendMessage = () => {
     return
   }
 
-  // 서버 DTO에 맞게 필드 구성 (timestamp 제거 - 서버에서 생성)
+  if (!stompClient || !isConnected.value) {
+    alert('WebSocket 연결이 끄어졌습니다.')
+    return
+  }
+
   const message = {
     roomId: currentRoomId.value,
     senderId: currentMemberId.value,
     content: content
   }
 
-  console.log('📤 메시지 전송:', message)
-  console.log('📤 전송 경로:', `/publish/${currentRoomId.value}`)
+  console.log('📤 메시지 SEND:', message)
 
-  // ✅ webstomp-client의 올바른 파라미터 순서: send(destination, body, headers)
-  stompClient.send(
-    `/publish/${currentRoomId.value}`,
-    JSON.stringify(message),  // body가 두 번째
-    {
-      'content-type': 'application/json'  // headers가 세 번째
-    }
-  )
+  try {
+    // ✅ webstomp-client: send(destination, body, headers)
+    stompClient.send(
+      `/publish/${currentRoomId.value}`,
+      JSON.stringify(message),
+      {
+        'content-type': 'application/json'
+      }
+    )
 
-  console.log('✅ 메시지 전송 완료')
-  messageInput.value = ''
+    console.log('✅ 메시지 전송 완료')
+    messageInput.value = ''
+  } catch (error) {
+    console.error('❌ 메시지 전송 실패:', error)
+    alert('메시지 전송에 실패했습니다.')
+  }
 }
 
 const markAsRead = async (roomId) => {
@@ -597,6 +654,13 @@ const leaveRoom = async () => {
 
     if (response.ok) {
       alert('채팅방을 나갔습니다.')
+      
+      // 구독 해제
+      if (subscription) {
+        subscription.unsubscribe()
+        subscription = null
+      }
+      
       currentRoomId.value = null
       currentRoomName.value = ''
       messages.value = []
