@@ -14,6 +14,13 @@
           placeholder="http://localhost:8080" 
           style="width: 200px;"
         >
+        <label>WebSocket Endpoint:</label>
+        <select v-model="wsEndpoint" style="width: 150px;">
+          <option value="/connect">/connect</option>
+          <option value="/ws">/ws</option>
+          <option value="/stomp">/stomp</option>
+          <option value="/websocket">/websocket</option>
+        </select>
         <label>이메일:</label>
         <input 
           v-model="email" 
@@ -21,7 +28,7 @@
           placeholder="test@example.com" 
           style="width: 180px;"
         >
-        <label>비밀밀번호:</label>
+        <label>비밀번호:</label>
         <input 
           v-model="password" 
           type="password" 
@@ -170,6 +177,7 @@ import SockJS from 'sockjs-client'
 import webstomp from 'webstomp-client'
 
 const serverUrl = ref('http://localhost:8080')
+const wsEndpoint = ref('/connect')  // ⭐ 서버 엔드포인트 선택 가능
 const email = ref('')
 const password = ref('')
 const isConnected = ref(false)
@@ -287,30 +295,31 @@ const connectWebSocket = () => {
       return
     }
 
+    // ⭐ 서버 엔드포인트 URL 생성
+    const wsUrl = serverUrl.value + wsEndpoint.value
+    
     console.log('\n========== WebSocket 연결 시도 ==========')
-    console.log('🎯 서버:', serverUrl.value + '/connect')
+    console.log('🎯 WebSocket URL:', wsUrl)
+    console.log('🎯 엔드포인트:', wsEndpoint.value)
     console.log('🔑 Access Token (전체):', accessToken.value)
     console.log('👤 회원 ID:', currentMemberId.value)
+    console.log('\n💡 브라우저 Network 탭에서 실제 URL을 확인하세요!')
+    console.log('예상 URL: ws://localhost:8080' + wsEndpoint.value + '/XXX/XXX/websocket')
 
-    const socket = new SockJS(serverUrl.value + '/connect')
+    const socket = new SockJS(wsUrl)
     stompClient = webstomp.over(socket)
     
     stompClient.debug = (msg) => {
-      console.log('🔍 STOMP DEBUG:', msg)
+      console.log('🔍 STOMP:', msg)
     }
     
-    // ✅ 헤더 구성 - Authorization 필드
     const connectHeaders = {
       'Authorization': 'Bearer ' + accessToken.value
     }
     
-    console.log('\n📤 CONNECT 헤더 (JSON):')
-    console.log(JSON.stringify(connectHeaders, null, 2))
-    console.log('\n📤 CONNECT 헤더 (Authorization 필드):')
-    console.log('  Key:', 'Authorization')
-    console.log('  Value:', connectHeaders['Authorization'])
-    console.log('  Value length:', connectHeaders['Authorization'].length)
-    console.log('  Starts with Bearer:', connectHeaders['Authorization'].startsWith('Bearer '))
+    console.log('\n📤 CONNECT 헤더:')
+    console.log('  Authorization: Bearer ' + accessToken.value.substring(0, 20) + '...')
+    console.log('  (전체 길이: ' + connectHeaders['Authorization'].length + ')')
     
     console.log('\n🔌 STOMP.connect() 호출...')
     
@@ -325,38 +334,22 @@ const connectWebSocket = () => {
       },
       function(error) {
         console.log('\n❌❌❌ WebSocket CONNECT 실패 ❌❌❌')
-        console.error('Error 객체:', error)
-        console.error('Error type:', typeof error)
-        console.error('Error command:', error.command)
-        console.error('Error headers:', error.headers)
-        console.error('Error body:', error.body)
-        
-        if (error.headers) {
-          console.error('\n🚨 서버가 반환한 에러 헤더:')
-          Object.keys(error.headers).forEach(key => {
-            console.error(`  ${key}: ${error.headers[key]}`)
-          })
-        }
+        console.error('Error:', error)
+        console.error('Error message:', error.headers?.message || error.body || 'Unknown')
         
         isConnected.value = false
         
         let errorMessage = 'WebSocket CONNECT 실패'
         if (error && error.headers && error.headers.message) {
           errorMessage += ': ' + error.headers.message
-        } else if (error && typeof error === 'string') {
-          errorMessage += ': ' + error
-        } else if (error && error.toString) {
-          errorMessage += ': ' + error.toString()
         }
         
-        console.error('\n📢 에러 메시지:', errorMessage)
         console.error('\n🔍 확인할 사항:')
-        console.error('1. 서버가 실행 중인지?')
-        console.error('2. 서버 CORS 설정이 올바른지?')
-        console.error('3. 서버 StompHandler에서 헤더를 받고 있는지?')
-        console.error('4. 서버 JWT 검증이 통과하는지?')
+        console.error('1. 서버 엔드포인트가 "' + wsEndpoint.value + '"가 맞는지?')
+        console.error('2. 서버 StompWebSocketConfig에서 registerStompEndpoints() 확인')
+        console.error('3. 브라우저 Network 탭에서 실제 연결되는 URL 확인')
         
-        alert(errorMessage)
+        alert(errorMessage + '\n\n엔드포인트를 변경해보세요: /connect, /ws, /stomp, /websocket')
         reject(error)
       }
     )
