@@ -234,24 +234,20 @@ const login = async () => {
       return
     }
 
-    const data = await response.json()
+    const responseData = await response.json()
     console.log('========== 로그인 응답 ==========')
-    console.log(JSON.stringify(data, null, 2))
+    console.log(JSON.stringify(responseData, null, 2))
     
-    // 백엔드 응답 구조에 맞게 토큰 추출
-    // ApiResponse<MemberLoginResponse> 구조
-    // result.tokenInfo.accessToken
-    // result.memberInfo.memberId
-    
-    const result = data.result
-    if (!result) {
-      console.error('❌ result가 없습니다!')
+    // 실제 응답 구조: { result: "SUCCESS", data: { tokenInfo, memberInfo }, error: null }
+    const data = responseData.data
+    if (!data) {
+      console.error('❌ data가 없습니다!')
       alert('로그인 응답 형식이 올바르지 않습니다.')
       return
     }
     
-    const tokenInfo = result.tokenInfo
-    const memberInfo = result.memberInfo
+    const tokenInfo = data.tokenInfo
+    const memberInfo = data.memberInfo
     
     if (!tokenInfo || !tokenInfo.accessToken) {
       console.error('❌ tokenInfo 또는 accessToken이 없습니다!')
@@ -272,6 +268,7 @@ const login = async () => {
 
     console.log('✅ 토큰 저장:', accessToken.value.substring(0, 30) + '...')
     console.log('✅ 회원 ID:', currentMemberId.value)
+    console.log('✅ 회원 이름:', memberInfo.memberName)
     console.log('========== WebSocket 연결 시작 ==========')
     
     connectWebSocket()
@@ -361,18 +358,18 @@ const signup = async () => {
       return
     }
 
-    const data = await response.json()
-    console.log('회원가입 응답:', data)
+    const responseData = await response.json()
+    console.log('회원가입 응답:', responseData)
     
     // 로그인과 동일한 구조로 토큰 추출
-    const result = data.result
-    if (!result || !result.tokenInfo || !result.memberInfo) {
+    const data = responseData.data
+    if (!data || !data.tokenInfo || !data.memberInfo) {
       alert('회원가입 응답 형식이 올바르지 않습니다.')
       return
     }
 
-    accessToken.value = result.tokenInfo.accessToken
-    currentMemberId.value = result.memberInfo.memberId
+    accessToken.value = data.tokenInfo.accessToken
+    currentMemberId.value = data.memberInfo.memberId
     email.value = form.email
 
     alert('회원가입 성공! 자동으로 로그인됩니다.')
@@ -423,7 +420,7 @@ const createPrivateRoom = async () => {
 
     if (response.ok) {
       const data = await response.json()
-      const roomId = data.result || data
+      const roomId = data.data || data.result || data
       alert(`채팅방이 생성되었습니다. Room ID: ${roomId}`)
       loadRooms()
     } else {
@@ -449,8 +446,8 @@ const loadRooms = async () => {
     })
 
     if (response.ok) {
-      const data = await response.json()
-      rooms.value = data.result?.content || data.content || []
+      const responseData = await response.json()
+      rooms.value = responseData.data?.content || responseData.result?.content || responseData.content || []
     } else {
       console.error('채팅방 목록을 불러올 수 없습니다.')
     }
@@ -489,8 +486,8 @@ const loadMessages = async (roomId) => {
     })
 
     if (response.ok) {
-      const data = await response.json()
-      const messageList = data.result?.content || data.content || []
+      const responseData = await response.json()
+      const messageList = responseData.data?.content || responseData.result?.content || responseData.content || []
 
       messages.value = messageList.reverse()
 
