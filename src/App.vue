@@ -21,7 +21,7 @@
           placeholder="test@example.com" 
           style="width: 180px;"
         >
-        <label>비밀번호:</label>
+        <label>비밀밀번호:</label>
         <input 
           v-model="password" 
           type="password" 
@@ -265,7 +265,8 @@ const login = async () => {
     accessToken.value = tokenInfo.accessToken
     currentMemberId.value = memberInfo.memberId
 
-    console.log('✅ 토큰 저장:', accessToken.value.substring(0, 30) + '...')
+    console.log('✅ 토큰 저장 완료')
+    console.log('✅ Access Token (전체):', accessToken.value)
     console.log('✅ 회원 ID:', currentMemberId.value)
     console.log('✅ 회원 이름:', memberInfo.memberName)
     console.log('========== WebSocket 연결 시작 ==========')
@@ -277,7 +278,6 @@ const login = async () => {
   }
 }
 
-// ✅ WebSocket 연결을 Promise로 감싸서 CONNECT 성공을 보장
 const connectWebSocket = () => {
   return new Promise((resolve, reject) => {
     if (!accessToken.value) {
@@ -287,40 +287,60 @@ const connectWebSocket = () => {
       return
     }
 
-    console.log('🔌 WebSocket 연결 중...')
-    console.log('서버:', serverUrl.value + '/connect')
-    console.log('토큰 (앞 20자):', accessToken.value.substring(0, 20) + '...')
+    console.log('\n========== WebSocket 연결 시도 ==========')
+    console.log('🎯 서버:', serverUrl.value + '/connect')
+    console.log('🔑 Access Token (전체):', accessToken.value)
+    console.log('👤 회원 ID:', currentMemberId.value)
 
     const socket = new SockJS(serverUrl.value + '/connect')
     stompClient = webstomp.over(socket)
     
     stompClient.debug = (msg) => {
-      console.log('🔍 STOMP:', msg)
+      console.log('🔍 STOMP DEBUG:', msg)
     }
     
+    // ✅ 헤더 구성 - Authorization 필드
     const connectHeaders = {
       'Authorization': 'Bearer ' + accessToken.value
     }
     
-    console.log('📤 CONNECT 헤더:', { Authorization: 'Bearer ...' })
+    console.log('\n📤 CONNECT 헤더 (JSON):')
+    console.log(JSON.stringify(connectHeaders, null, 2))
+    console.log('\n📤 CONNECT 헤더 (Authorization 필드):')
+    console.log('  Key:', 'Authorization')
+    console.log('  Value:', connectHeaders['Authorization'])
+    console.log('  Value length:', connectHeaders['Authorization'].length)
+    console.log('  Starts with Bearer:', connectHeaders['Authorization'].startsWith('Bearer '))
+    
+    console.log('\n🔌 STOMP.connect() 호출...')
     
     stompClient.connect(
       connectHeaders,
       function(frame) {
-        console.log('✅ WebSocket CONNECT 성공!')
+        console.log('\n✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
         console.log('Frame:', frame)
         isConnected.value = true
-        
-        // CONNECT 성공 후 방 목록 로드
         loadRooms()
         resolve(frame)
       },
       function(error) {
-        console.error('❌ WebSocket CONNECT 실패')
-        console.error('Error:', error)
+        console.log('\n❌❌❌ WebSocket CONNECT 실패 ❌❌❌')
+        console.error('Error 객체:', error)
+        console.error('Error type:', typeof error)
+        console.error('Error command:', error.command)
+        console.error('Error headers:', error.headers)
+        console.error('Error body:', error.body)
+        
+        if (error.headers) {
+          console.error('\n🚨 서버가 반환한 에러 헤더:')
+          Object.keys(error.headers).forEach(key => {
+            console.error(`  ${key}: ${error.headers[key]}`)
+          })
+        }
+        
         isConnected.value = false
         
-        let errorMessage = 'WebSocket 연결 실패'
+        let errorMessage = 'WebSocket CONNECT 실패'
         if (error && error.headers && error.headers.message) {
           errorMessage += ': ' + error.headers.message
         } else if (error && typeof error === 'string') {
@@ -329,7 +349,14 @@ const connectWebSocket = () => {
           errorMessage += ': ' + error.toString()
         }
         
-        alert(errorMessage + '\n서버가 실행 중인지, CORS 설정이 올바른지 확인해주세요.')
+        console.error('\n📢 에러 메시지:', errorMessage)
+        console.error('\n🔍 확인할 사항:')
+        console.error('1. 서버가 실행 중인지?')
+        console.error('2. 서버 CORS 설정이 올바른지?')
+        console.error('3. 서버 StompHandler에서 헤더를 받고 있는지?')
+        console.error('4. 서버 JWT 검증이 통과하는지?')
+        
+        alert(errorMessage)
         reject(error)
       }
     )
@@ -425,7 +452,6 @@ const disconnect = () => {
   messages.value = []
 }
 
-// ✅ 방 생성 후 150ms 딜레이 + 자동 선택
 const createPrivateRoom = async () => {
   if (!otherMemberId.value) {
     alert('상대방 ID를 입력해주세요.')
@@ -463,10 +489,8 @@ const createPrivateRoom = async () => {
     const roomId = data.data || data.result || data
     console.log('✅ 방 생성 성공! Room ID:', roomId)
     
-    // 확실하게 방 목록 새로고침
     await loadRooms()
     
-    // 150ms 딜레이 후 새로 만들어진 방을 자동으로 선택
     console.log('⏱️ 150ms 딜레이 후 방 선택...')
     setTimeout(() => {
       const newRoom = rooms.value.find(r => r.roomId === roomId)
@@ -509,12 +533,10 @@ const loadRooms = async () => {
   }
 }
 
-// ✅ SUBSCRIBE 시 STOMP 연결 상태 확인
 const selectRoom = (room) => {
-  // STOMP 연결 상태 확인
   if (!stompClient || !isConnected.value) {
     console.error('❌ STOMP 클라이언트가 연결되지 않았습니다!')
-    alert('WebSocket 연결이 끔어졌습니다. 다시 로그인해주세요.')
+    alert('WebSocket 연결이 끄어졌습니다. 다시 로그인해주세요.')
     return
   }
 
@@ -523,14 +545,12 @@ const selectRoom = (room) => {
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
 
-  // 기존 구독 해제
   if (subscription) {
     console.log('🔴 기존 구독 해제')
     subscription.unsubscribe()
     subscription = null
   }
 
-  // ✅ SUBSCRIBE: CONNECT 성공 후에만 호출됨
   const subscriptionPath = `/topic/chat/room/${room.roomId}`
   console.log('📡 SUBSCRIBE 시도:', subscriptionPath)
   
@@ -549,7 +569,6 @@ const selectRoom = (room) => {
     return
   }
 
-  // 메시지 로드
   loadMessages(room.roomId)
 }
 
@@ -603,7 +622,6 @@ const sendMessage = () => {
   console.log('📤 메시지 SEND:', message)
 
   try {
-    // ✅ webstomp-client: send(destination, body, headers)
     stompClient.send(
       `/publish/${currentRoomId.value}`,
       JSON.stringify(message),
@@ -655,7 +673,6 @@ const leaveRoom = async () => {
     if (response.ok) {
       alert('채팅방을 나갔습니다.')
       
-      // 구독 해제
       if (subscription) {
         subscription.unsubscribe()
         subscription = null
