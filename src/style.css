@@ -117,11 +117,13 @@ body {
   border-right: 1px solid #e0e0e0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .room-controls {
   padding: 15px;
   border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
 }
 
 .room-controls h3 {
@@ -156,6 +158,7 @@ body {
 .room-list {
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
 }
 
 .room-item {
@@ -187,6 +190,8 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .chat-header {
@@ -196,6 +201,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .chat-header h3 {
@@ -205,8 +211,10 @@ body {
 .messages {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 20px;
   background: #e5ddd5;
+  min-height: 0;
 }
 
 .message {
@@ -255,12 +263,122 @@ body {
   margin-top: 3px;
 }
 
+/* 이미지 메시지 스타일 */
+.message-image img {
+  max-width: 300px;
+  max-height: 400px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: block;
+}
+
+.image-caption {
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+/* 파일 메시지 스타일 */
+.message-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px;
+}
+
+.file-icon {
+  font-size: 32px;
+}
+
+.file-info {
+  flex: 1;
+}
+
+.file-name {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.file-size {
+  font-size: 12px;
+  color: #666;
+}
+
+.file-download {
+  padding: 5px 10px;
+  background: #075e54;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.file-download:hover {
+  background: #064e47;
+}
+
+/* 비디오 메시지 스타일 */
+.message-video .video-player {
+  max-width: 400px;
+  width: 100%;
+  border-radius: 8px;
+}
+
+.video-caption {
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+/* 오디오 메시지 스타일 */
+.message-audio {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-icon {
+  font-size: 24px;
+}
+
+.audio-player {
+  width: 250px;
+}
+
+/* 시스템 메시지 스타일 */
+.message-system {
+  text-align: center;
+  font-style: italic;
+  color: #666;
+  font-size: 13px;
+}
+
 .message-input {
   padding: 15px;
   border-top: 1px solid #e0e0e0;
   background: white;
   display: flex;
   gap: 10px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.attachment-buttons {
+  display: flex;
+  gap: 5px;
+}
+
+.btn-attachment {
+  padding: 8px 12px;
+  background: #f0f2f5;
+  border: 1px solid #ddd;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.2s;
+}
+
+.btn-attachment:hover {
+  background: #e4e6e9;
 }
 
 .message-input input {
@@ -284,6 +402,34 @@ body {
 
 .message-input button:hover {
   background: #064e47;
+}
+
+/* 업로드 진행 표시 */
+.upload-progress {
+  padding: 10px 15px;
+  background: #f0f2f5;
+  border-top: 1px solid #e0e0e0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #25d366;
+  transition: width 0.3s;
+}
+
+.progress-text {
+  font-size: 12px;
+  color: #666;
+  text-align: center;
 }
 
 .no-room-selected {
@@ -326,12 +472,13 @@ body {
 }
 
 .modal.show {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-content {
   background-color: white;
-  margin: 10% auto;
   padding: 30px;
   border-radius: 8px;
   width: 90%;
@@ -387,6 +534,41 @@ body {
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
+}
+
+/* 이미지 확대 모달 */
+.image-modal-content {
+  position: relative;
+  max-width: 90%;
+  max-height: 90vh;
+}
+
+.image-modal-content img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.image-modal-content .close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  color: white;
+  font-size: 40px;
+  font-weight: bold;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.5);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.image-modal-content .close:hover {
+  background: rgba(0, 0, 0, 0.8);
 }
 
 .close {
