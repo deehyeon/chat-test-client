@@ -90,10 +90,21 @@
             <h3>{{ currentRoomName }}</h3>
             <button @click="leaveRoom" class="btn-danger">나가기</button>
           </div>
-          <div class="messages" ref="messagesContainer">
+          <div class="messages" ref="messagesContainer" @scroll="handleScroll">
+            <!-- 로딩 표시 -->
+            <div v-if="isLoadingMore" class="loading-indicator">
+              <div class="spinner"></div>
+              <span>이전 메시지 불러오는 중...</span>
+            </div>
+            
+            <!-- 더 이상 메시지가 없을 때 -->
+            <div v-if="!hasMoreMessages && messages.length > 0" class="no-more-messages">
+              처음 메시지입니다
+            </div>
+            
             <div 
               v-for="(message, index) in messages" 
-              :key="index"
+              :key="message.seq || index"
               :class="['message', message.senderId == currentMemberId ? 'mine' : 'others']"
             >
               <div v-if="message.senderId != currentMemberId" class="message-sender">
@@ -101,18 +112,18 @@
               </div>
               <div class="message-content">
                 <!-- TEXT 메시지 -->
-                <div v-if="message.type === 'TEXT'" class="message-text">
+                <div v-if="getMessageType(message) === 'TEXT'" class="message-text">
                   {{ message.content }}
                 </div>
                 
                 <!-- IMAGE 메시지 -->
-                <div v-else-if="message.type === 'IMAGE'" class="message-image">
+                <div v-else-if="getMessageType(message) === 'IMAGE'" class="message-image">
                   <img :src="message.fileUrl" :alt="message.fileName" @click="openImageModal(message.fileUrl)">
                   <div v-if="message.content" class="image-caption">{{ message.content }}</div>
                 </div>
                 
                 <!-- FILE 메시지 -->
-                <div v-else-if="message.type === 'FILE'" class="message-file">
+                <div v-else-if="getMessageType(message) === 'FILE'" class="message-file">
                   <div class="file-icon">📄</div>
                   <div class="file-info">
                     <div class="file-name">{{ message.fileName }}</div>
@@ -122,19 +133,19 @@
                 </div>
                 
                 <!-- VIDEO 메시지 -->
-                <div v-else-if="message.type === 'VIDEO'" class="message-video">
+                <div v-else-if="getMessageType(message) === 'VIDEO'" class="message-video">
                   <video controls :src="message.fileUrl" class="video-player"></video>
                   <div v-if="message.content" class="video-caption">{{ message.content }}</div>
                 </div>
                 
                 <!-- AUDIO 메시지 -->
-                <div v-else-if="message.type === 'AUDIO'" class="message-audio">
+                <div v-else-if="getMessageType(message) === 'AUDIO'" class="message-audio">
                   <div class="audio-icon">🎵</div>
                   <audio controls :src="message.fileUrl" class="audio-player"></audio>
                 </div>
                 
                 <!-- SYSTEM 메시지 -->
-                <div v-else-if="message.type === 'SYSTEM'" class="message-system">
+                <div v-else-if="getMessageType(message) === 'SYSTEM'" class="message-system">
                   {{ message.content }}
                 </div>
                 
@@ -301,6 +312,12 @@ const showImageModal = ref(false)
 const currentImage = ref('')
 const uploadProgress = ref(0)
 
+// 무한 스크롤 관련 상태
+const isLoadingMore = ref(false)
+const hasMoreMessages = ref(true)
+const nextBeforeSeq = ref(null)
+const isFirstLoad = ref(true)
+
 // 파일 입력 refs
 const imageInput = ref(null)
 const fileInput = ref(null)
@@ -327,6 +344,11 @@ const statusText = computed(() => {
   }
   return '연결 안됨'
 })
+
+// 메시지 타입 가져오기 (messageType 또는 type 필드 모두 지원)
+const getMessageType = (message) => {
+  return message.messageType || message.type || 'TEXT'
+}
 
 const login = async () => {
   if (!email.value || !password.value) {
@@ -418,8 +440,6 @@ const connectWebSocket = () => {
     console.log('🎯 엔드포인트:', wsEndpoint.value)
     console.log('🔑 Access Token (전체):', accessToken.value)
     console.log('👤 회원 ID:', currentMemberId.value)
-    console.log('\n💡 브라우저 Network 탭에서 실제 URL을 확인하세요!')
-    console.log('예상 URL: ws://localhost:8080' + wsEndpoint.value + '/XXX/XXX/websocket')
 
     const socket = new SockJS(wsUrl)
     stompClient = webstomp.over(socket)
@@ -434,9 +454,6 @@ const connectWebSocket = () => {
     
     console.log('\n📤 CONNECT 헤더:')
     console.log('  Authorization: Bearer ' + accessToken.value.substring(0, 20) + '...')
-    console.log('  (전체 길이: ' + connectHeaders['Authorization'].length + ')')
-    
-    console.log('\n🔌 STOMP.connect() 호출...')
     
     stompClient.connect(
       connectHeaders,
@@ -458,11 +475,6 @@ const connectWebSocket = () => {
         if (error && error.headers && error.headers.message) {
           errorMessage += ': ' + error.headers.message
         }
-        
-        console.error('\n🔍 확인할 사항:')
-        console.error('1. 서버 엔드포인트가 "' + wsEndpoint.value + '"가 맞는지?')
-        console.error('2. 서버 StompWebSocketConfig에서 registerStompEndpoints() 확인')
-        console.error('3. 브라우저 Network 탭에서 실제 연결되는 URL 확인')
         
         alert(errorMessage + '\n\n엔드포인트를 변경해보세요: /connect, /ws, /stomp, /websocket')
         reject(error)
@@ -599,7 +611,6 @@ const createPrivateRoom = async () => {
     
     await loadRooms()
     
-    console.log('⏱️ 150ms 딜레이 후 방 선택...')
     setTimeout(() => {
       const newRoom = rooms.value.find(r => r.roomId === roomId)
       if (newRoom) {
@@ -652,6 +663,12 @@ const selectRoom = (room) => {
   
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
+  
+  // 무한 스크롤 상태 초기화
+  messages.value = []
+  nextBeforeSeq.value = null
+  hasMoreMessages.value = true
+  isFirstLoad.value = true
 
   if (subscription) {
     console.log('🔴 기존 구독 해제')
@@ -666,6 +683,8 @@ const selectRoom = (room) => {
     subscription = stompClient.subscribe(subscriptionPath, (message) => {
       console.log('📩 메시지 수신:', message.body)
       const chatMessage = JSON.parse(message.body)
+      
+      // 서버가 ASC로 주므로 그대로 append
       messages.value.push(chatMessage)
       nextTick(() => scrollToBottom())
     })
@@ -680,13 +699,26 @@ const selectRoom = (room) => {
   loadMessages(room.roomId)
 }
 
-const loadMessages = async (roomId) => {
+const loadMessages = async (roomId, beforeSeq = null) => {
   if (!accessToken.value) {
     return
   }
+  
+  if (isLoadingMore.value) {
+    return // 중복 로드 방지
+  }
 
   try {
-    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/messages?size=50`, {
+    isLoadingMore.value = true
+    
+    let url = `${serverUrl.value}/v1/chat/rooms/${roomId}/messages?size=50`
+    if (beforeSeq) {
+      url += `&beforeSeq=${beforeSeq}`
+    }
+    
+    console.log('📨 메시지 로드 요청:', url)
+
+    const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + accessToken.value
       }
@@ -694,18 +726,65 @@ const loadMessages = async (roomId) => {
 
     if (response.ok) {
       const responseData = await response.json()
+      console.log('📨 서버 응답:', responseData)
+      
       const messageList = responseData.data?.content || responseData.result?.content || responseData.content || []
+      const hasNext = responseData.data?.hasNext ?? responseData.result?.hasNext ?? false
+      
+      console.log('📨 받은 메시지 수:', messageList.length)
+      console.log('📨 hasNext:', hasNext)
+      console.log('📨 첨번째 메시지 (seq):', messageList[0]?.seq)
+      console.log('📨 마지막 메시지 (seq):', messageList[messageList.length - 1]?.seq)
 
-      messages.value = messageList.reverse()
+      if (isFirstLoad.value) {
+        // 처음 로드: 서버가 ASC(=과거→최신)로 주므로 그대로 사용
+        messages.value = messageList
+        isFirstLoad.value = false
+        nextTick(() => scrollToBottom())
+      } else {
+        // 무한 스크롤: 이전 메시지를 위에 추가
+        const scrollHeight = messagesContainer.value.scrollHeight
+        messages.value = [...messageList, ...messages.value]
+        
+        // 스크롤 위치 유지
+        nextTick(() => {
+          const newScrollHeight = messagesContainer.value.scrollHeight
+          messagesContainer.value.scrollTop = newScrollHeight - scrollHeight
+        })
+      }
+      
+      // 다음 페이지 정보 업데이트
+      hasMoreMessages.value = hasNext
+      if (hasNext && messageList.length > 0) {
+        // 가장 오래된 메시지의 seq를 beforeSeq로 사용
+        nextBeforeSeq.value = messageList[0].seq
+        console.log('🔼 nextBeforeSeq 설정:', nextBeforeSeq.value)
+      } else {
+        nextBeforeSeq.value = null
+      }
+      
       console.log('📨 메시지 로드 완료:', messages.value.length, '개')
-
-      nextTick(() => scrollToBottom())
       markAsRead(roomId)
     } else {
       console.error('메시지 불러오기 실패')
     }
   } catch (error) {
     console.error('Error:', error)
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+// 스크롤 이벤트 핸들러 (무한 스크롤)
+const handleScroll = () => {
+  if (!messagesContainer.value || isLoadingMore.value || !hasMoreMessages.value) {
+    return
+  }
+  
+  // 스크롤이 위에 가까운지 확인 (상단 100px 이내)
+  if (messagesContainer.value.scrollTop < 100) {
+    console.log('🔼 이전 메시지 로드 트리거')
+    loadMessages(currentRoomId.value, nextBeforeSeq.value)
   }
 }
 
@@ -767,7 +846,6 @@ const handleFileSelect = async (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  // 파일 크기 체크 (예: 10MB)
   const maxSize = 10 * 1024 * 1024
   if (file.size > maxSize) {
     alert('파일 크기는 10MB를 초과할 수 없습니다.')
@@ -777,11 +855,8 @@ const handleFileSelect = async (event) => {
   try {
     uploadProgress.value = 0
     
-    // 실제로는 서버에 파일을 업로드하고 URL을 받아야 합니다.
-    // 여기서는 시뮬레이션을 위해 간단히 처리합니다.
     const fileUrl = await uploadFile(file)
     
-    // 메시지 타입 결정
     let messageType
     if (currentFileType.value === 'image') {
       messageType = MessageType.IMAGE
@@ -816,8 +891,6 @@ const handleFileSelect = async (event) => {
     console.log('✅ 파일 메시지 전송 완료')
     messageInput.value = ''
     uploadProgress.value = 0
-    
-    // 입력 필드 초기화
     event.target.value = ''
   } catch (error) {
     console.error('❌ 파일 전송 실패:', error)
@@ -826,39 +899,19 @@ const handleFileSelect = async (event) => {
   }
 }
 
-// 파일 업로드 함수 (실제로는 서버로 업로드해야 함)
 const uploadFile = async (file) => {
-  // 이 부분은 실제 서버 API에 맞춰 구현해야 합니다.
-  // 여기서는 시뮬레이션을 위해 FormData를 사용하여 업로드하는 예시를 보여줍니다.
-  
   return new Promise((resolve, reject) => {
     const formData = new FormData()
     formData.append('file', file)
     
-    // 업로드 진행상황 시뮬레이션
     let progress = 0
     const interval = setInterval(() => {
       progress += 10
       uploadProgress.value = progress
       if (progress >= 100) {
         clearInterval(interval)
-        
-        // 실제로는 서버에서 받은 URL을 사용해야 합니다.
-        // 여기서는 임시로 blob URL을 생성합니다.
         const blobUrl = URL.createObjectURL(file)
         resolve(blobUrl)
-        
-        // 실제 서버 업로드 예시:
-        // fetch(`${serverUrl.value}/v1/chat/upload`, {
-        //   method: 'POST',
-        //   headers: {
-        //     'Authorization': 'Bearer ' + accessToken.value
-        //   },
-        //   body: formData
-        // })
-        // .then(response => response.json())
-        // .then(data => resolve(data.fileUrl))
-        // .catch(error => reject(error))
       }
     }, 100)
   })
