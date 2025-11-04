@@ -287,11 +287,13 @@ const connectWebSocket = () => {
 
   console.log('🔌 WebSocket 연결 중...')
   console.log('서버:', serverUrl.value + '/connect')
-  console.log('토큰:', accessToken.value.substring(0, 20) + '...')
+  console.log('토큰 (앞 20자):', accessToken.value.substring(0, 20) + '...')
+  console.log('헤더에 포함될 토큰:', 'Bearer ' + accessToken.value.substring(0, 20) + '...')
 
   const socket = new SockJS(serverUrl.value + '/connect')
   stompClient = webstomp.over(socket)
   
+  // STOMP 디버그 로그 활성화
   stompClient.debug = (msg) => {
     console.log('🔍 STOMP:', msg)
   }
@@ -300,21 +302,51 @@ const connectWebSocket = () => {
     'Authorization': 'Bearer ' + accessToken.value
   }
   
-  console.log('📤 헤더 전송')
+  console.log('📤 연결 헤더:', { Authorization: 'Bearer ' + accessToken.value.substring(0, 20) + '...' })
   
   stompClient.connect(
     connectHeaders,
     function(frame) {
       console.log('✅ WebSocket 연결 성공!')
+      console.log('Frame:', frame)
       isConnected.value = true
       loadRooms()
     },
     function(error) {
-      console.error('❌ WebSocket 연결 실패:', error)
+      console.error('❌ WebSocket 연결 실패')
+      console.error('Error 객체:', error)
+      console.error('Error type:', typeof error)
+      if (error && error.headers) {
+        console.error('Error headers:', error.headers)
+      }
+      if (error && error.body) {
+        console.error('Error body:', error.body)
+      }
       isConnected.value = false
-      alert('WebSocket 연결 실패: ' + (error.headers?.message || error))
+      
+      let errorMessage = 'WebSocket 연결 실패'
+      if (error && error.headers && error.headers.message) {
+        errorMessage += ': ' + error.headers.message
+      } else if (error && typeof error === 'string') {
+        errorMessage += ': ' + error
+      } else if (error && error.toString) {
+        errorMessage += ': ' + error.toString()
+      }
+      
+      alert(errorMessage + '\n서버가 실행 중인지, CORS 설정이 올바른지 확인해주세요.')
     }
   )
+  
+  // SockJS 이벤트 리스너 추가
+  socket.onclose = function(e) {
+    console.log('🔴 SockJS 연결 종료:', e)
+    console.log('Close code:', e.code)
+    console.log('Close reason:', e.reason)
+  }
+  
+  socket.onerror = function(e) {
+    console.error('🔴 SockJS 에러:', e)
+  }
 }
 
 const signup = async () => {
@@ -516,16 +548,18 @@ const sendMessage = () => {
   }
 
   console.log('📤 메시지 전송:', message)
+  console.log('📤 전송 경로:', `/publish/${currentRoomId.value}`)
 
-  // STOMP SEND에 content-type 헤더 추가 (필수!)
+  // ✅ webstomp-client의 올바른 파라미터 순서: send(destination, headers, body)
   stompClient.send(
-    `/publish/${currentRoomId.value}`, 
-    JSON.stringify(message), 
+    `/publish/${currentRoomId.value}`,
     {
-      'content-type': 'application/json;charset=UTF-8'
-    }
+      'content-type': 'application/json'
+    },
+    JSON.stringify(message)
   )
 
+  console.log('✅ 메시지 전송 완료')
   messageInput.value = ''
 }
 
