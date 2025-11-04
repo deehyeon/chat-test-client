@@ -550,13 +550,13 @@ const sendMessage = () => {
   console.log('📤 메시지 전송:', message)
   console.log('📤 전송 경로:', `/publish/${currentRoomId.value}`)
 
-  // ✅ webstomp-client의 올바른 파라미터 순서: send(destination, headers, body)
+  // ✅ webstomp-client의 올바른 파라미터 순서: send(destination, body, headers)
   stompClient.send(
     `/publish/${currentRoomId.value}`,
+    JSON.stringify(message),  // body가 두 번째
     {
-      'content-type': 'application/json'
-    },
-    JSON.stringify(message)
+      'content-type': 'application/json'  // headers가 세 번째
+    }
   )
 
   console.log('✅ 메시지 전송 완료')
