@@ -141,7 +141,7 @@
         </div>
         <div class="form-group">
           <label>비밀번호</label>
-          <input v-model="signupForm.password" type="password" placeholder="비밀번호">
+          <input v-model="signupForm.password" type="password" placeholder="비밀밀번호">
         </div>
         <div class="form-group">
           <label>닉네임</label>
@@ -167,7 +167,7 @@
 <script setup>
 import { ref, computed, nextTick, onUnmounted } from 'vue'
 import SockJS from 'sockjs-client'
-import Stomp from 'stompjs'
+import webstomp from 'webstomp-client'
 
 const serverUrl = ref('http://localhost:8080')
 const email = ref('')
@@ -256,10 +256,10 @@ const login = async () => {
 
 const connectWebSocket = () => {
   const socket = new SockJS(serverUrl.value + '/connect')
-  stompClient = Stomp.over(socket)
+  stompClient = webstomp.over(socket)
   
   // 디버그 로그 비활성화 (필요시 활성화)
-  stompClient.debug = null
+  stompClient.debug = false
   
   const headers = {
     'Authorization': 'Bearer ' + accessToken.value
@@ -471,7 +471,7 @@ const sendMessage = () => {
     timestamp: new Date().toISOString()
   }
 
-  stompClient.send(`/publish/${currentRoomId.value}`, {}, JSON.stringify(message))
+  stompClient.send(`/publish/${currentRoomId.value}`, JSON.stringify(message), {})
 
   messageInput.value = ''
 }
