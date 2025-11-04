@@ -85,7 +85,7 @@
         <div v-if="!currentRoomId" class="no-room-selected">
           채팅방을 선택해주세요
         </div>
-        <div v-else style="flex: 1; display: flex; flex-direction: column;">
+        <template v-else>
           <div class="chat-header">
             <h3>{{ currentRoomName }}</h3>
             <button @click="leaveRoom" class="btn-danger">나가기</button>
@@ -100,12 +100,63 @@
                 사용자 {{ message.senderId }}
               </div>
               <div class="message-content">
-                <div class="message-text">{{ message.content }}</div>
+                <!-- TEXT 메시지 -->
+                <div v-if="message.type === 'TEXT'" class="message-text">
+                  {{ message.content }}
+                </div>
+                
+                <!-- IMAGE 메시지 -->
+                <div v-else-if="message.type === 'IMAGE'" class="message-image">
+                  <img :src="message.fileUrl" :alt="message.fileName" @click="openImageModal(message.fileUrl)">
+                  <div v-if="message.content" class="image-caption">{{ message.content }}</div>
+                </div>
+                
+                <!-- FILE 메시지 -->
+                <div v-else-if="message.type === 'FILE'" class="message-file">
+                  <div class="file-icon">📄</div>
+                  <div class="file-info">
+                    <div class="file-name">{{ message.fileName }}</div>
+                    <div class="file-size">{{ formatFileSize(message.fileSize) }}</div>
+                  </div>
+                  <a :href="message.fileUrl" target="_blank" class="file-download">다운로드</a>
+                </div>
+                
+                <!-- VIDEO 메시지 -->
+                <div v-else-if="message.type === 'VIDEO'" class="message-video">
+                  <video controls :src="message.fileUrl" class="video-player"></video>
+                  <div v-if="message.content" class="video-caption">{{ message.content }}</div>
+                </div>
+                
+                <!-- AUDIO 메시지 -->
+                <div v-else-if="message.type === 'AUDIO'" class="message-audio">
+                  <div class="audio-icon">🎵</div>
+                  <audio controls :src="message.fileUrl" class="audio-player"></audio>
+                </div>
+                
+                <!-- SYSTEM 메시지 -->
+                <div v-else-if="message.type === 'SYSTEM'" class="message-system">
+                  {{ message.content }}
+                </div>
+                
                 <div class="message-time">{{ formatTime(message.timestamp) }}</div>
               </div>
             </div>
           </div>
           <div class="message-input">
+            <div class="attachment-buttons">
+              <button @click="triggerFileInput('image')" class="btn-attachment" title="이미지">
+                🖼️
+              </button>
+              <button @click="triggerFileInput('file')" class="btn-attachment" title="파일">
+                📎
+              </button>
+              <button @click="triggerFileInput('video')" class="btn-attachment" title="비디오">
+                🎬
+              </button>
+              <button @click="triggerFileInput('audio')" class="btn-attachment" title="오디오">
+                🎵
+              </button>
+            </div>
             <input 
               v-model="messageInput" 
               type="text" 
@@ -113,8 +164,45 @@
               @keypress.enter="sendMessage"
             >
             <button @click="sendMessage">전송</button>
+            
+            <!-- 파일 입력 (숨김) -->
+            <input 
+              ref="imageInput"
+              type="file" 
+              accept="image/*" 
+              @change="handleFileSelect"
+              style="display: none;"
+            >
+            <input 
+              ref="fileInput"
+              type="file" 
+              @change="handleFileSelect"
+              style="display: none;"
+            >
+            <input 
+              ref="videoInput"
+              type="file" 
+              accept="video/*" 
+              @change="handleFileSelect"
+              style="display: none;"
+            >
+            <input 
+              ref="audioInput"
+              type="file" 
+              accept="audio/*" 
+              @change="handleFileSelect"
+              style="display: none;"
+            >
           </div>
-        </div>
+          
+          <!-- 파일 업로드 진행 표시 -->
+          <div v-if="uploadProgress > 0" class="upload-progress">
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
+            </div>
+            <div class="progress-text">업로드 중... {{ uploadProgress }}%</div>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -169,6 +257,14 @@
       </div>
     </div>
   </div>
+  
+  <!-- 이미지 확대 모달 -->
+  <div :class="['modal', { show: showImageModal }]" @click.self="showImageModal = false">
+    <div class="image-modal-content">
+      <span class="close" @click="showImageModal = false">&times;</span>
+      <img :src="currentImage" alt="확대 이미지">
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -176,8 +272,18 @@ import { ref, computed, nextTick, onUnmounted } from 'vue'
 import SockJS from 'sockjs-client'
 import webstomp from 'webstomp-client'
 
+// MessageType enum
+const MessageType = {
+  TEXT: 'TEXT',
+  IMAGE: 'IMAGE',
+  FILE: 'FILE',
+  VIDEO: 'VIDEO',
+  AUDIO: 'AUDIO',
+  SYSTEM: 'SYSTEM'
+}
+
 const serverUrl = ref('http://localhost:8080')
-const wsEndpoint = ref('/connect')  // ⭐ 서버 엔드포인트 선택 가능
+const wsEndpoint = ref('/connect')
 const email = ref('')
 const password = ref('')
 const isConnected = ref(false)
@@ -191,6 +297,16 @@ const messages = ref([])
 const messageInput = ref('')
 const messagesContainer = ref(null)
 const showSignupModal = ref(false)
+const showImageModal = ref(false)
+const currentImage = ref('')
+const uploadProgress = ref(0)
+
+// 파일 입력 refs
+const imageInput = ref(null)
+const fileInput = ref(null)
+const videoInput = ref(null)
+const audioInput = ref(null)
+const currentFileType = ref('')
 
 const signupForm = ref({
   type: 'individual',
@@ -295,7 +411,6 @@ const connectWebSocket = () => {
       return
     }
 
-    // ⭐ 서버 엔드포인트 URL 생성
     const wsUrl = serverUrl.value + wsEndpoint.value
     
     console.log('\n========== WebSocket 연결 시도 ==========')
@@ -529,7 +644,7 @@ const loadRooms = async () => {
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
     console.error('❌ STOMP 클라이언트가 연결되지 않았습니다!')
-    alert('WebSocket 연결이 끄어졌습니다. 다시 로그인해주세요.')
+    alert('WebSocket 연결이 끊어졌습니다. 다시 로그인해주세요.')
     return
   }
 
@@ -602,14 +717,18 @@ const sendMessage = () => {
   }
 
   if (!stompClient || !isConnected.value) {
-    alert('WebSocket 연결이 끄어졌습니다.')
+    alert('WebSocket 연결이 끊어졌습니다.')
     return
   }
 
   const message = {
     roomId: currentRoomId.value,
     senderId: currentMemberId.value,
-    content: content
+    type: MessageType.TEXT,
+    content: content,
+    fileUrl: null,
+    fileName: null,
+    fileSize: null
   }
 
   console.log('📤 메시지 SEND:', message)
@@ -629,6 +748,120 @@ const sendMessage = () => {
     console.error('❌ 메시지 전송 실패:', error)
     alert('메시지 전송에 실패했습니다.')
   }
+}
+
+const triggerFileInput = (type) => {
+  currentFileType.value = type
+  if (type === 'image') {
+    imageInput.value.click()
+  } else if (type === 'file') {
+    fileInput.value.click()
+  } else if (type === 'video') {
+    videoInput.value.click()
+  } else if (type === 'audio') {
+    audioInput.value.click()
+  }
+}
+
+const handleFileSelect = async (event) => {
+  const file = event.target.files[0]
+  if (!file) return
+
+  // 파일 크기 체크 (예: 10MB)
+  const maxSize = 10 * 1024 * 1024
+  if (file.size > maxSize) {
+    alert('파일 크기는 10MB를 초과할 수 없습니다.')
+    return
+  }
+
+  try {
+    uploadProgress.value = 0
+    
+    // 실제로는 서버에 파일을 업로드하고 URL을 받아야 합니다.
+    // 여기서는 시뮬레이션을 위해 간단히 처리합니다.
+    const fileUrl = await uploadFile(file)
+    
+    // 메시지 타입 결정
+    let messageType
+    if (currentFileType.value === 'image') {
+      messageType = MessageType.IMAGE
+    } else if (currentFileType.value === 'video') {
+      messageType = MessageType.VIDEO
+    } else if (currentFileType.value === 'audio') {
+      messageType = MessageType.AUDIO
+    } else {
+      messageType = MessageType.FILE
+    }
+
+    const message = {
+      roomId: currentRoomId.value,
+      senderId: currentMemberId.value,
+      type: messageType,
+      content: messageInput.value.trim() || null,
+      fileUrl: fileUrl,
+      fileName: file.name,
+      fileSize: file.size
+    }
+
+    console.log('📤 파일 메시지 SEND:', message)
+
+    stompClient.send(
+      `/publish/${currentRoomId.value}`,
+      JSON.stringify(message),
+      {
+        'content-type': 'application/json'
+      }
+    )
+
+    console.log('✅ 파일 메시지 전송 완료')
+    messageInput.value = ''
+    uploadProgress.value = 0
+    
+    // 입력 필드 초기화
+    event.target.value = ''
+  } catch (error) {
+    console.error('❌ 파일 전송 실패:', error)
+    alert('파일 전송에 실패했습니다: ' + error.message)
+    uploadProgress.value = 0
+  }
+}
+
+// 파일 업로드 함수 (실제로는 서버로 업로드해야 함)
+const uploadFile = async (file) => {
+  // 이 부분은 실제 서버 API에 맞춰 구현해야 합니다.
+  // 여기서는 시뮬레이션을 위해 FormData를 사용하여 업로드하는 예시를 보여줍니다.
+  
+  return new Promise((resolve, reject) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    
+    // 업로드 진행상황 시뮬레이션
+    let progress = 0
+    const interval = setInterval(() => {
+      progress += 10
+      uploadProgress.value = progress
+      if (progress >= 100) {
+        clearInterval(interval)
+        
+        // 실제로는 서버에서 받은 URL을 사용해야 합니다.
+        // 여기서는 임시로 blob URL을 생성합니다.
+        const blobUrl = URL.createObjectURL(file)
+        resolve(blobUrl)
+        
+        // 실제 서버 업로드 예시:
+        // fetch(`${serverUrl.value}/v1/chat/upload`, {
+        //   method: 'POST',
+        //   headers: {
+        //     'Authorization': 'Bearer ' + accessToken.value
+        //   },
+        //   body: formData
+        // })
+        // .then(response => response.json())
+        // .then(data => resolve(data.fileUrl))
+        // .catch(error => reject(error))
+      }
+    }, 100)
+  })
 }
 
 const markAsRead = async (roomId) => {
@@ -699,10 +932,22 @@ const formatTime = (timestamp) => {
   })
 }
 
+const formatFileSize = (bytes) => {
+  if (!bytes) return ''
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
 const getRoomTypeLabel = (type) => {
   if (type === 'PRIVATE') return '개인'
   if (type === 'GROUP') return '그룹'
   return type
+}
+
+const openImageModal = (imageUrl) => {
+  currentImage.value = imageUrl
+  showImageModal.value = true
 }
 
 onUnmounted(() => {
