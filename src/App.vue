@@ -65,7 +65,7 @@
             v-for="room in rooms" 
             :key="room.roomId"
             :class="['room-item', { active: room.roomId === currentRoomId }]"
-            @click="selectRoom(room)"
+            @click="enterRoom(room)"
           >
             <div class="room-header">
               <h4>채팅방 {{ room.roomId }}</h4>
@@ -433,10 +433,27 @@ const updateRoomInfo = (roomId, updates) => {
     }
     console.log('🔄 방 정보 업데이트:', roomId, updates)
   } else {
-    // 새 방 추가 (한 경우 - 다른 사람이 새로 방을 만들어 초대한 경우)
-    console.log('✨ 새 방 추가:', roomId)
-    // 전체 목록을 다시 불러오는 것이 안전
-    loadRooms()
+    // 새 방 추가 (다른 사람이 새로 방을 만들어 초대한 경우)
+    console.log('✨ 새 방 추가:', roomId, updates)
+    rooms.value.push({
+      roomId: roomId,
+      type: 'PRIVATE', // 기본값
+      lastMessagePreview: updates.lastMessagePreview || '',
+      lastMessageAt: updates.lastMessageAt || new Date().toISOString(),
+      lastMessageSeq: updates.lastMessageSeq || 0,
+      unreadCount: 0 // 새 방이므로 unread는 별도로 처리
+    })
+  }
+}
+
+// 특정 방을 맨 위로 올리는 정렬
+const moveRoomToTop = (roomId) => {
+  const roomIndex = rooms.value.findIndex(r => r.roomId === roomId)
+  if (roomIndex > 0) {
+    // roomIndex가 0보다 크면 맨 위로 이동
+    const [room] = rooms.value.splice(roomIndex, 1)
+    rooms.value.unshift(room)
+    console.log('⬆️ 방을 맨 위로 이동:', roomId)
   }
 }
 
@@ -600,10 +617,17 @@ const subscribeToRoomSummaryQueue = () => {
 
 // 채팅방 요약 업데이트 처리 (공통 로직)
 const handleRoomSummaryUpdate = (data) => {
-  // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread }
-  if (data.roomId) {
+  // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread, senderId }
+  if (!data.roomId) return
+  
+  const roomId = data.roomId
+  
+  // 현재 보고 있는 방이 아닐 때만 unread 업데이트
+  if (currentRoomId.value !== roomId) {
+    console.log('📬 다른 방의 메시지 - unread 증가:', roomId)
+    
     // 방 정보 업데이트
-    updateRoomInfo(data.roomId, {
+    updateRoomInfo(roomId, {
       lastMessagePreview: data.lastMessagePreview,
       lastMessageAt: data.lastMessageAt,
       lastMessageSeq: data.lastMessageSeq
@@ -611,11 +635,23 @@ const handleRoomSummaryUpdate = (data) => {
     
     // 읽지 않은 메시지 수 업데이트
     if (data.unread !== undefined) {
-      unreadByRoom.value[data.roomId] = data.unread
+      unreadByRoom.value[roomId] = data.unread
     }
     
-    // 최신 메시지 시각 기준으로 재정렬
-    sortRoomsByLatest()
+    // 방을 맨 위로 이동
+    moveRoomToTop(roomId)
+  } else {
+    console.log('📭 현재 방의 메시지 - unread 유지:', roomId)
+    
+    // 현재 보고 있는 방이면 방 정보만 업데이트하고 unread는 0 유지
+    updateRoomInfo(roomId, {
+      lastMessagePreview: data.lastMessagePreview,
+      lastMessageAt: data.lastMessageAt,
+      lastMessageSeq: data.lastMessageSeq
+    })
+    
+    // unread는 0으로 유지 (이미 보고 있는 방이므로)
+    unreadByRoom.value[roomId] = 0
   }
 }
 
@@ -745,7 +781,7 @@ const createPrivateRoom = async () => {
     setTimeout(() => {
       const newRoom = rooms.value.find(r => r.roomId === roomId)
       if (newRoom) {
-        selectRoom(newRoom)
+        enterRoom(newRoom)
       }
     }, 150)
     
@@ -785,7 +821,8 @@ const loadRooms = async () => {
   }
 }
 
-const selectRoom = (room) => {
+// 방 입장 시 unreadCount 초기화
+const enterRoom = (room) => {
   if (!stompClient || !isConnected.value) {
     alert('WebSocket 연결이 끊어졌습니다.')
     return
@@ -793,6 +830,10 @@ const selectRoom = (room) => {
 
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
+  
+  // 방 입장 시 즉시 unreadCount를 0으로 설정
+  unreadByRoom.value[room.roomId] = 0
+  console.log('🚪 방 입장 - unread 초기화:', room.roomId)
   
   // 무한 스크롤 상태 초기화
   messages.value = []
@@ -828,9 +869,6 @@ const selectRoom = (room) => {
     alert('채팅방 구독에 실패했습니다.')
     return
   }
-
-  // 방 입장 시 내관적으로 UI 배지 0으로
-  unreadByRoom.value[room.roomId] = 0
   
   loadMessages(room.roomId)
 }
