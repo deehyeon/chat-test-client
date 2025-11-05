@@ -69,8 +69,8 @@
           >
             <div class="room-header">
               <h4>채팅방 {{ room.roomId }}</h4>
-              <span v-if="room.unreadCount > 0" class="unread-badge">
-                {{ room.unreadCount }}
+              <span v-if="getUnreadCount(room.roomId) > 0" class="unread-badge">
+                {{ getUnreadCount(room.roomId) }}
               </span>
             </div>
             <p class="room-type">Room ID: {{ room.roomId }} ({{ getRoomTypeLabel(room.type) }})</p>
@@ -327,6 +327,9 @@ const showImageModal = ref(false)
 const currentImage = ref('')
 const uploadProgress = ref(0)
 
+// 읽지 않은 메시지 수 관리 (실시간 업데이트를 위한 로컬 상태)
+const unreadByRoom = ref({})
+
 // 무한 스크롤 관련 상태
 const isLoadingMore = ref(false)
 const hasMoreMessages = ref(true)
@@ -339,6 +342,9 @@ const fileInput = ref(null)
 const videoInput = ref(null)
 const audioInput = ref(null)
 const currentFileType = ref('')
+
+// 개인 큐 구독 참조
+let unreadSubscription = null
 
 const signupForm = ref({
   type: 'individual',
@@ -353,6 +359,9 @@ const signupForm = ref({
 let stompClient = null
 let subscription = null
 
+// 디바운스 타이머
+let markReadDebounceTimer = null
+
 const statusText = computed(() => {
   if (isConnected.value) {
     return `연결됨 (${email.value} / ID: ${currentMemberId.value})`
@@ -360,14 +369,50 @@ const statusText = computed(() => {
   return '연결 안됨'
 })
 
-// 메시지 타입 가져오기 (messageType 또는 type 필드 모두 지원)
+// 읽지 않은 메시지 수 가져오기
+const getUnreadCount = (roomId) => {
+  return unreadByRoom.value[roomId] || 0
+}
+
+// 메시지 타입 가져오기
 const getMessageType = (message) => {
-  const type = message.messageType || message.type || 'TEXT'
-  return type
+  return message.messageType || message.type || 'TEXT'
 }
 
 const handleImageError = (e) => {
   console.error('❌ 이미지 로드 실패:', e.target.src)
+}
+
+// 스크롤이 하단 근처인지 확인
+const isNearBottom = () => {
+  if (!messagesContainer.value) return false
+  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
+  return scrollHeight - scrollTop - clientHeight < 150
+}
+
+// 디바운스된 읽음 처리
+const markReadDebounced = (roomId) => {
+  if (markReadDebounceTimer) {
+    clearTimeout(markReadDebounceTimer)
+  }
+  
+  markReadDebounceTimer = setTimeout(async () => {
+    // 내관적 업데이트
+    unreadByRoom.value[roomId] = 0
+    
+    // 서버 반영
+    try {
+      await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + accessToken.value
+        }
+      })
+      console.log('✅ 읽음 처리 완료:', roomId)
+    } catch (error) {
+      console.error('❌ 읽음 처리 실패:', error)
+    }
+  }, 400)
 }
 
 const login = async () => {
@@ -437,6 +482,10 @@ const connectWebSocket = () => {
       function(frame) {
         console.log('✅ WebSocket 연결 성공')
         isConnected.value = true
+        
+        // 읽지 않은 메시지 수 실시간 동기화를 위한 개인 큐 구독
+        subscribeToUnreadQueue()
+        
         loadRooms()
         resolve(frame)
       },
@@ -453,6 +502,26 @@ const connectWebSocket = () => {
       isConnected.value = false
     }
   })
+}
+
+// 읽지 않은 메시지 수 실시간 동기화를 위한 개인 큐 구독
+const subscribeToUnreadQueue = () => {
+  if (!stompClient || unreadSubscription) return
+  
+  try {
+    unreadSubscription = stompClient.subscribe('/user/queue/unread', (frame) => {
+      const data = JSON.parse(frame.body)
+      console.log('🔔 읽지 않은 메시지 수 업데이트:', data)
+      
+      // roomId와 unread 수 업데이트
+      if (data.roomId !== undefined && data.unread !== undefined) {
+        unreadByRoom.value[data.roomId] = data.unread
+      }
+    })
+    console.log('✅ 읽지 않은 메시지 큐 구독 성공')
+  } catch (error) {
+    console.error('❌ 읽지 않은 메시지 큐 구독 실패:', error)
+  }
 }
 
 const signup = async () => {
@@ -523,6 +592,10 @@ const disconnect = () => {
       subscription.unsubscribe()
       subscription = null
     }
+    if (unreadSubscription) {
+      unreadSubscription.unsubscribe()
+      unreadSubscription = null
+    }
     stompClient.disconnect()
     stompClient = null
   }
@@ -532,6 +605,7 @@ const disconnect = () => {
   accessToken.value = null
   rooms.value = []
   messages.value = []
+  unreadByRoom.value = {}
 }
 
 const createPrivateRoom = async () => {
@@ -590,7 +664,15 @@ const loadRooms = async () => {
 
     if (response.ok) {
       const responseData = await response.json()
-      rooms.value = responseData.data?.content || responseData.result?.content || responseData.content || []
+      const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
+      rooms.value = roomList
+      
+      // 초기 읽지 않은 메시지 수 동기화
+      roomList.forEach(room => {
+        if (room.unreadCount !== undefined) {
+          unreadByRoom.value[room.roomId] = room.unreadCount
+        }
+      })
     }
   } catch (error) {
     console.error('Error:', error)
@@ -624,9 +706,16 @@ const selectRoom = (room) => {
       const chatMessage = JSON.parse(message.body)
       console.log('📩 실시간 메시지 수신:', chatMessage)
       
-      // ✅ 서버가 ASC로 주므로 실시간 메시지는 맨 아래에 append
+      // 서버가 ASC로 주므로 실시간 메시지는 맨 아래에 append
       messages.value.push(chatMessage)
-      nextTick(() => scrollToBottom())
+      nextTick(() => {
+        scrollToBottom()
+        
+        // 스크롤이 하단 근처이고 현재 방을 보고 있다면 자동 읽음 처리
+        if (isNearBottom() && currentRoomId.value === room.roomId) {
+          markReadDebounced(room.roomId)
+        }
+      })
     })
   } catch (error) {
     console.error('❌ SUBSCRIBE 실패:', error)
@@ -634,6 +723,9 @@ const selectRoom = (room) => {
     return
   }
 
+  // 방 입장 시 내관적으로 UI 배지 0으로
+  unreadByRoom.value[room.roomId] = 0
+  
   loadMessages(room.roomId)
 }
 
@@ -665,20 +757,20 @@ const loadMessages = async (roomId, beforeSeq = null) => {
         messageCount: messageList.length,
         hasNext,
         firstSeq: messageList[0]?.seq,
-        lastSeq: messageList[messageList.length - 1]?.seq,
-        firstMessageType: messageList[0]?.messageType || messageList[0]?.type,
-        firstContent: messageList[0]?.content,
-        firstFileUrl: messageList[0]?.fileUrl
+        lastSeq: messageList[messageList.length - 1]?.seq
       })
 
       if (isFirstLoad.value) {
-        // ✅ 처음 로드: 서버가 ASC(과거→최신)로 주므로 그대로 사용
-        // 절대 reverse() 하면 안됨!
+        // 처음 로드: 서버가 ASC(과거→최신)로 주므로 그대로 사용
         messages.value = messageList
         isFirstLoad.value = false
-        nextTick(() => scrollToBottom())
+        nextTick(() => {
+          scrollToBottom()
+          // 방 입장 후 서버에 읽음 처리 요청
+          markReadDebounced(roomId)
+        })
       } else {
-        // ✅ 무한 스크롤: 이전 메시지를 위에 prepend
+        // 무한 스크롤: 이전 메시지를 위에 prepend
         const scrollHeight = messagesContainer.value.scrollHeight
         messages.value = [...messageList, ...messages.value]
         
@@ -692,12 +784,9 @@ const loadMessages = async (roomId, beforeSeq = null) => {
       // 다음 페이지 정보 업데이트
       hasMoreMessages.value = hasNext
       if (hasNext && messageList.length > 0) {
-        // ✅ 가장 오래된 메시지(= 배열의 첨 번째)의 seq를 beforeSeq로 사용
+        // 가장 오래된 메시지의 seq를 beforeSeq로 사용
         nextBeforeSeq.value = messageList[0].seq
-        console.log('🔼 nextBeforeSeq 설정:', nextBeforeSeq.value)
       }
-      
-      markAsRead(roomId)
     }
   } catch (error) {
     console.error('Error:', error)
@@ -706,7 +795,7 @@ const loadMessages = async (roomId, beforeSeq = null) => {
   }
 }
 
-// ✅ 스크롤 이벤트 핸들러: 위로 스크롤 시 이전 메시지 로드
+// 스크롤 이벤트 핸들러: 위로 스크롤 시 이전 메시지 로드
 const handleScroll = () => {
   if (!messagesContainer.value || isLoadingMore.value || !hasMoreMessages.value) {
     return
@@ -820,19 +909,6 @@ const uploadFile = async (file) => {
   })
 }
 
-const markAsRead = async (roomId) => {
-  if (!accessToken.value) return
-
-  try {
-    await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + accessToken.value }
-    })
-  } catch (error) {
-    console.error('읽음 처리 실패:', error)
-  }
-}
-
 const leaveRoom = async () => {
   if (!currentRoomId.value || !accessToken.value) return
   if (!confirm('정말 이 채팅방을 나가시겠습니까?')) return
@@ -895,6 +971,9 @@ const openImageModal = (imageUrl) => {
 
 onUnmounted(() => {
   disconnect()
+  if (markReadDebounceTimer) {
+    clearTimeout(markReadDebounceTimer)
+  }
 })
 </script>
 
