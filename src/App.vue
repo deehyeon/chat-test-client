@@ -77,8 +77,8 @@
             <p :class="['room-preview', { empty: !room.lastMessagePreview }]">
               {{ room.lastMessagePreview || '메시지가 없습니다' }}
             </p>
-            <p v-if="room.updatedAt" class="room-time">
-              {{ formatLastMessageTime(room.updatedAt) }}
+            <p v-if="room.lastMessageAt" class="room-time">
+              {{ formatLastMessageTime(room.lastMessageAt) }}
             </p>
           </div>
         </div>
@@ -343,12 +343,7 @@ const signupForm = ref({
 })
 
 let stompClient = null
-
-// ✅ 1) 구독 저장소 분리
-const subscriptions = {
-  roomSummary: null,   // 개인 큐 (/user/queue/room-summary) - 앱 켜진 내내 유지
-  roomTopic: null      // 방 내부 (/topic/chat/room/{id}) - 방 전환 때만 교체
-}
+let subscription = null
 
 const statusText = computed(() => {
   if (isConnected.value) {
@@ -369,23 +364,6 @@ const isNearBottom = () => {
   if (!messagesContainer.value) return false
   const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
   return scrollHeight - scrollTop - clientHeight < 150
-}
-
-// 읽음 처리 API
-const markAsRead = async (roomId) => {
-  if (!accessToken.value) return
-  
-  try {
-    await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + accessToken.value
-      }
-    })
-    console.log('✅ 읽음 처리:', roomId)
-  } catch (error) {
-    console.error('❌ 읽음 처리 실패:', error)
-  }
 }
 
 const login = async () => {
@@ -452,16 +430,14 @@ const connectWebSocket = () => {
     
     stompClient.connect(
       connectHeaders,
-      async (frame) => {
-        console.log('\n✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
-        console.log('Frame:', frame)
+      function(frame) {
+        console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
         isConnected.value = true
         
-        // ✅ 2) 연결 직후 개인 큐 영구 구독 (절대 언서브스크라이브 하지 않음)
+        // ✅ 개인 큐 구독 (이 줄을 반드시 추가)
         subscribeRoomSummary()
         
-        await loadRooms()
-        
+        loadRooms()
         resolve(frame)
       },
       function(error) {
@@ -475,76 +451,51 @@ const connectWebSocket = () => {
     socket.onclose = function(e) {
       console.log('⚠️ WebSocket 연결 종료')
       isConnected.value = false
-      subscriptions.roomSummary = null
-      subscriptions.roomTopic = null
     }
   })
 }
 
-// ✅ 2) 연결 직후 "개인 큐" 영구 구독 추가
+// ✅ 1️⃣ 개인 큐 구독 함수 추가
 function subscribeRoomSummary() {
-  if (!stompClient) return
-  if (subscriptions.roomSummary) return // 중복 방지
+  if (!stompClient) {
+    console.error('❌ STOMP 클라이언트가 없습니다.')
+    return
+  }
 
-  subscriptions.roomSummary = stompClient.subscribe(
-    '/user/queue/room-summary',
-    (frame) => {
-      try {
-        const summary = JSON.parse(frame.body)
-        console.log('🎉🎉🎉 room-summary 수신:', summary)
-        onRoomSummary(summary)
-      } catch (e) {
-        console.error('❌ room-summary parse error', e, frame.body)
+  console.log('📡 /user/queue/room-summary 구독 시도...')
+
+  // /user/queue/room-summary 구독
+  stompClient.subscribe('/user/queue/room-summary', (frame) => {
+    try {
+      const summary = JSON.parse(frame.body)
+      console.log('📬 [room-summary 수신]', summary)
+
+      const roomId = summary.roomId
+      const preview = summary.preview || ''
+      const unread = summary.unread || 0
+
+      // rooms 배열 갱신 (미리보기 / unreadCount 업데이트)
+      const idx = rooms.value.findIndex(r => r.roomId === roomId)
+      if (idx !== -1) {
+        rooms.value[idx].lastMessagePreview = preview
+        rooms.value[idx].unreadCount = unread
+      } else {
+        // 혹시 새로 생긴 방이라면 추가
+        rooms.value.unshift({
+          roomId,
+          type: 'PRIVATE',
+          lastMessagePreview: preview,
+          unreadCount: unread
+        })
       }
+
+      console.log(`✅ 방 ${roomId} 요약 업데이트: preview="${preview}", unread=${unread}`)
+    } catch (e) {
+      console.error('room-summary 파싱 오류:', e, frame.body)
     }
-  )
-  console.log('✅ /user/queue/room-summary 구독 시작 (영구 유지)')
-}
-
-// ✅ 3) 수신 요약으로 좌측 목록 실시간 갱신
-function onRoomSummary(summary) {
-  // 서버가 내려주는 예: { roomId, preview, unread, updatedAt?, lastMessage? }
-  const roomId = summary.roomId
-  const preview = summary.preview ?? ''
-  const unread = typeof summary.unread === 'number' ? summary.unread : 0
-  const updatedAt = summary.updatedAt ?? new Date().toISOString()
-
-  const idx = rooms.value.findIndex(r => r.roomId === roomId)
-
-  // 현재 보고 있는 방이면 미읽음 0 처리 + 읽음 API
-  const isOpen = currentRoomId.value === roomId
-
-  if (idx === -1) {
-    console.log('✨ 새 방 추가:', roomId)
-    rooms.value.unshift({
-      roomId,
-      type: 'PRIVATE',
-      lastMessagePreview: preview,
-      unreadCount: isOpen ? 0 : unread,
-      updatedAt
-    })
-  } else {
-    console.log('🔄 방 업데이트:', roomId, '이전 unread:', rooms.value[idx].unreadCount, '→', unread)
-    const r = rooms.value[idx]
-    const next = {
-      ...r,
-      lastMessagePreview: preview || r.lastMessagePreview,
-      updatedAt,
-      unreadCount: isOpen ? 0 : unread
-    }
-    rooms.value.splice(idx, 1)
-    rooms.value.unshift(next) // 최신순 맨 앞으로
-    console.log('✅ 업데이트 완료 - unread:', next.unreadCount)
-  }
-
-  // 방을 열어둔 상태라면 읽음 처리
-  if (isOpen) {
-    markAsRead(roomId)
-  }
-  
-  nextTick(() => {
-    console.log('🎨 UI 업데이트 완료 - 총', rooms.value.length, '개 방')
   })
+
+  console.log('✅ /user/queue/room-summary 구독 완료')
 }
 
 const signup = async () => {
@@ -609,33 +560,19 @@ const signup = async () => {
   }
 }
 
-// ✅ 보너스: disconnect 시 안전하게 해제
+// ✅ 3️⃣ disconnect 수정
 const disconnect = () => {
-  console.log('🔌 연결 종료')
-  
-  try {
-    if (subscriptions.roomTopic) {
-      subscriptions.roomTopic.unsubscribe()
-      subscriptions.roomTopic = null
-    }
-    if (subscriptions.roomSummary) {
-      subscriptions.roomSummary.unsubscribe()
-      subscriptions.roomSummary = null
-    }
-    if (stompClient) {
-      stompClient.disconnect()
-      stompClient = null
-    }
-  } finally {
-    isConnected.value = false
-    currentMemberId.value = null
-    currentRoomId.value = null
-    accessToken.value = null
-    rooms.value = []
-    messages.value = []
+  if (stompClient) {
+    stompClient.disconnect()
+    stompClient = null
   }
-  
-  console.log('✅ 연결 종료 완료')
+  isConnected.value = false
+  rooms.value = []
+  messages.value = []
+  currentRoomId.value = null
+  currentMemberId.value = null
+  accessToken.value = null
+  console.log('🔴 WebSocket 연결 종료 및 구독 해제 완료')
 }
 
 const createPrivateRoom = async () => {
@@ -704,7 +641,6 @@ const loadRooms = async () => {
   }
 }
 
-// ✅ 보너스: 방 구독 해제 시 개인 큐 끊지 않기
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
     alert('WebSocket 연결이 끊어졌습니다.')
@@ -716,55 +652,34 @@ const selectRoom = (room) => {
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
   
-  // 방 입장 시 즉시 unreadCount 초기화
-  const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
-  if (idx !== -1) {
-    rooms.value[idx].unreadCount = 0
-  }
-  
-  // 즉시 읽음 처리
-  markAsRead(room.roomId)
-  
   messages.value = []
   nextBeforeSeq.value = null
   hasMoreMessages.value = true
   isFirstLoad.value = true
 
-  // ⬇️ 방 구독만 관리 (개인 큐는 절대 건드리지 않음!)
-  if (subscriptions.roomTopic) {
-    console.log('🔴 기존 방 구독 해제')
-    subscriptions.roomTopic.unsubscribe()
-    subscriptions.roomTopic = null
+  if (subscription) {
+    subscription.unsubscribe()
+    subscription = null
   }
 
-  const path = `/topic/chat/room/${room.roomId}`
-  console.log('📡 방 구독:', path)
+  const subscriptionPath = `/topic/chat/room/${room.roomId}`
   
-  subscriptions.roomTopic = stompClient.subscribe(path, (message) => {
-    const m = JSON.parse(message.body)
-    console.log('📩 실시간 메시지:', m)
-    
-    // ✅ 서버 필드명 매핑 (createdAt → timestamp)
-    messages.value.push({
-      seq: m.seq,
-      senderId: m.senderId,
-      content: m.content,
-      type: m.type || m.messageType,
-      fileUrl: m.fileUrl,
-      fileName: m.fileName,
-      fileSize: m.fileSize,
-      timestamp: m.createdAt ?? m.timestamp ?? new Date().toISOString()
+  try {
+    subscription = stompClient.subscribe(subscriptionPath, (message) => {
+      const chatMessage = JSON.parse(message.body)
+      console.log('📩 실시간 메시지:', chatMessage)
+      
+      messages.value.push(chatMessage)
+      nextTick(() => {
+        scrollToBottom()
+      })
     })
-    
-    nextTick(() => {
-      scrollToBottom()
-      if (isNearBottom()) {
-        markAsRead(room.roomId)
-      }
-    })
-  })
+  } catch (error) {
+    console.error('❌ 방 구독 실패:', error)
+    alert('채팅방 구독에 실패했습니다.')
+    return
+  }
   
-  console.log('✅ 방 구독 완료')
   loadMessages(room.roomId)
 }
 
@@ -790,27 +705,15 @@ const loadMessages = async (roomId, beforeSeq = null) => {
       const messageList = responseData.data?.content || responseData.result?.content || responseData.content || []
       const hasNext = responseData.data?.hasNext ?? responseData.result?.hasNext ?? false
 
-      // ✅ 메시지 시간 필드 매핑 (createdAt → timestamp)
-      const mappedMessages = messageList.map(m => ({
-        seq: m.seq,
-        senderId: m.senderId,
-        content: m.content,
-        type: m.type || m.messageType,
-        fileUrl: m.fileUrl,
-        fileName: m.fileName,
-        fileSize: m.fileSize,
-        timestamp: m.createdAt ?? m.timestamp ?? new Date().toISOString()
-      }))
-
       if (isFirstLoad.value) {
-        messages.value = mappedMessages
+        messages.value = messageList
         isFirstLoad.value = false
         nextTick(() => {
           scrollToBottom()
         })
       } else {
         const scrollHeight = messagesContainer.value.scrollHeight
-        messages.value = [...mappedMessages, ...messages.value]
+        messages.value = [...messageList, ...messages.value]
         
         nextTick(() => {
           const newScrollHeight = messagesContainer.value.scrollHeight
@@ -819,8 +722,8 @@ const loadMessages = async (roomId, beforeSeq = null) => {
       }
       
       hasMoreMessages.value = hasNext
-      if (hasNext && mappedMessages.length > 0) {
-        nextBeforeSeq.value = mappedMessages[0].seq
+      if (hasNext && messageList.length > 0) {
+        nextBeforeSeq.value = messageList[0].seq
       }
     }
   } catch (error) {
@@ -951,9 +854,9 @@ const leaveRoom = async () => {
     })
 
     if (response.ok) {
-      if (subscriptions.roomTopic) {
-        subscriptions.roomTopic.unsubscribe()
-        subscriptions.roomTopic = null
+      if (subscription) {
+        subscription.unsubscribe()
+        subscription = null
       }
       
       currentRoomId.value = null
