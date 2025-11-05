@@ -90,10 +90,21 @@
             <h3>{{ currentRoomName }}</h3>
             <button @click="leaveRoom" class="btn-danger">나가기</button>
           </div>
-          <div class="messages" ref="messagesContainer">
+          <div class="messages" ref="messagesContainer" @scroll="handleScroll">
+            <!-- 로딩 표시 -->
+            <div v-if="isLoadingMore" class="loading-indicator">
+              <div class="spinner"></div>
+              <span>이전 메시지 불러오는 중...</span>
+            </div>
+            
+            <!-- 더 이상 메시지가 없을 때 -->
+            <div v-if="!hasMoreMessages && messages.length > 0" class="no-more-messages">
+              처음 메시지입니다
+            </div>
+            
             <div 
               v-for="(message, index) in messages" 
-              :key="index"
+              :key="message.seq || index"
               :class="['message', message.senderId == currentMemberId ? 'mine' : 'others']"
             >
               <div v-if="message.senderId != currentMemberId" class="message-sender">
@@ -101,41 +112,56 @@
               </div>
               <div class="message-content">
                 <!-- TEXT 메시지 -->
-                <div v-if="message.type === 'TEXT'" class="message-text">
-                  {{ message.content }}
+                <div v-if="getMessageType(message) === 'TEXT'" class="message-text">
+                  {{ message.content || '(내용 없음)' }}
                 </div>
                 
                 <!-- IMAGE 메시지 -->
-                <div v-else-if="message.type === 'IMAGE'" class="message-image">
-                  <img :src="message.fileUrl" :alt="message.fileName" @click="openImageModal(message.fileUrl)">
+                <div v-else-if="getMessageType(message) === 'IMAGE'" class="message-image">
+                  <img 
+                    v-if="message.fileUrl" 
+                    :src="message.fileUrl" 
+                    :alt="message.fileName || '이미지'" 
+                    @click="openImageModal(message.fileUrl)"
+                    @error="handleImageError"
+                  >
+                  <div v-else class="error-message">❌ 이미지 URL이 없습니다</div>
                   <div v-if="message.content" class="image-caption">{{ message.content }}</div>
                 </div>
                 
                 <!-- FILE 메시지 -->
-                <div v-else-if="message.type === 'FILE'" class="message-file">
+                <div v-else-if="getMessageType(message) === 'FILE'" class="message-file">
                   <div class="file-icon">📄</div>
                   <div class="file-info">
-                    <div class="file-name">{{ message.fileName }}</div>
+                    <div class="file-name">{{ message.fileName || '파일명 없음' }}</div>
                     <div class="file-size">{{ formatFileSize(message.fileSize) }}</div>
                   </div>
-                  <a :href="message.fileUrl" target="_blank" class="file-download">다운로드</a>
+                  <a v-if="message.fileUrl" :href="message.fileUrl" target="_blank" class="file-download">다운로드</a>
+                  <span v-else class="error-message">❌ URL 없음</span>
                 </div>
                 
                 <!-- VIDEO 메시지 -->
-                <div v-else-if="message.type === 'VIDEO'" class="message-video">
-                  <video controls :src="message.fileUrl" class="video-player"></video>
+                <div v-else-if="getMessageType(message) === 'VIDEO'" class="message-video">
+                  <video v-if="message.fileUrl" controls :src="message.fileUrl" class="video-player"></video>
+                  <div v-else class="error-message">❌ 비디오 URL이 없습니다</div>
                   <div v-if="message.content" class="video-caption">{{ message.content }}</div>
                 </div>
                 
                 <!-- AUDIO 메시지 -->
-                <div v-else-if="message.type === 'AUDIO'" class="message-audio">
+                <div v-else-if="getMessageType(message) === 'AUDIO'" class="message-audio">
                   <div class="audio-icon">🎵</div>
-                  <audio controls :src="message.fileUrl" class="audio-player"></audio>
+                  <audio v-if="message.fileUrl" controls :src="message.fileUrl" class="audio-player"></audio>
+                  <div v-else class="error-message">❌ 오디오 URL이 없습니다</div>
                 </div>
                 
                 <!-- SYSTEM 메시지 -->
-                <div v-else-if="message.type === 'SYSTEM'" class="message-system">
-                  {{ message.content }}
+                <div v-else-if="getMessageType(message) === 'SYSTEM'" class="message-system">
+                  {{ message.content || '(시스템 메시지)' }}
+                </div>
+                
+                <!-- 알 수 없는 타입 -->
+                <div v-else class="message-unknown">
+                  ⚠️ 알 수 없는 메시지 타입: {{ getMessageType(message) }}
                 </div>
                 
                 <div class="message-time">{{ formatTime(message.timestamp) }}</div>
@@ -236,7 +262,7 @@
         </div>
         <div class="form-group">
           <label>비밀번호</label>
-          <input v-model="signupForm.password" type="password" placeholder="비밀번호">
+          <input v-model="signupForm.password" type="password" placeholder="비밀밀번호">
         </div>
         <div class="form-group">
           <label>닉네임</label>
@@ -301,6 +327,12 @@ const showImageModal = ref(false)
 const currentImage = ref('')
 const uploadProgress = ref(0)
 
+// 무한 스크롤 관련 상태
+const isLoadingMore = ref(false)
+const hasMoreMessages = ref(true)
+const nextBeforeSeq = ref(null)
+const isFirstLoad = ref(true)
+
 // 파일 입력 refs
 const imageInput = ref(null)
 const fileInput = ref(null)
@@ -328,6 +360,16 @@ const statusText = computed(() => {
   return '연결 안됨'
 })
 
+// 메시지 타입 가져오기 (messageType 또는 type 필드 모두 지원)
+const getMessageType = (message) => {
+  const type = message.messageType || message.type || 'TEXT'
+  return type
+}
+
+const handleImageError = (e) => {
+  console.error('❌ 이미지 로드 실패:', e.target.src)
+}
+
 const login = async () => {
   if (!email.value || !password.value) {
     alert('이메일과 비밀번호를 입력해주세요.')
@@ -336,7 +378,6 @@ const login = async () => {
 
   try {
     console.log('========== 로그인 시작 ==========')
-    console.log('로그인 시도:', serverUrl.value + '/v1/auth/login')
 
     const response = await fetch(`${serverUrl.value}/v1/auth/login`, {
       method: 'POST',
@@ -349,51 +390,24 @@ const login = async () => {
       })
     })
 
-    console.log('응답 상태:', response.status)
-
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ message: '응답 파싱 실패' }))
-      console.error('로그인 실패 응답:', errorData)
       alert('로그인 실패: ' + (errorData.message || '이메일 또는 비밀번호를 확인해주세요.'))
       return
     }
 
     const responseData = await response.json()
-    console.log('========== 로그인 응답 ==========')
-    console.log(JSON.stringify(responseData, null, 2))
-    
     const data = responseData.data
-    if (!data) {
-      console.error('❌ data가 없습니다!')
+    
+    if (!data || !data.tokenInfo || !data.memberInfo) {
       alert('로그인 응답 형식이 올바르지 않습니다.')
       return
     }
     
-    const tokenInfo = data.tokenInfo
-    const memberInfo = data.memberInfo
-    
-    if (!tokenInfo || !tokenInfo.accessToken) {
-      console.error('❌ tokenInfo 또는 accessToken이 없습니다!')
-      console.log('tokenInfo:', tokenInfo)
-      alert('로그인 응답에서 토큰을 찾을 수 없습니다.')
-      return
-    }
-    
-    if (!memberInfo || !memberInfo.memberId) {
-      console.error('❌ memberInfo 또는 memberId가 없습니다!')
-      console.log('memberInfo:', memberInfo)
-      alert('로그인 응답에서 회원 정보를 찾을 수 없습니다.')
-      return
-    }
-    
-    accessToken.value = tokenInfo.accessToken
-    currentMemberId.value = memberInfo.memberId
+    accessToken.value = data.tokenInfo.accessToken
+    currentMemberId.value = data.memberInfo.memberId
 
-    console.log('✅ 토큰 저장 완료')
-    console.log('✅ Access Token (전체):', accessToken.value)
-    console.log('✅ 회원 ID:', currentMemberId.value)
-    console.log('✅ 회원 이름:', memberInfo.memberName)
-    console.log('========== WebSocket 연결 시작 ==========')
+    console.log('✅ 로그인 성공')
     
     await connectWebSocket()
   } catch (error) {
@@ -405,77 +419,38 @@ const login = async () => {
 const connectWebSocket = () => {
   return new Promise((resolve, reject) => {
     if (!accessToken.value) {
-      console.error('❌ accessToken이 없습니다!')
       alert('토큰이 없어서 WebSocket 연결을 할 수 없습니다.')
       reject(new Error('No access token'))
       return
     }
 
     const wsUrl = serverUrl.value + wsEndpoint.value
-    
-    console.log('\n========== WebSocket 연결 시도 ==========')
-    console.log('🎯 WebSocket URL:', wsUrl)
-    console.log('🎯 엔드포인트:', wsEndpoint.value)
-    console.log('🔑 Access Token (전체):', accessToken.value)
-    console.log('👤 회원 ID:', currentMemberId.value)
-    console.log('\n💡 브라우저 Network 탭에서 실제 URL을 확인하세요!')
-    console.log('예상 URL: ws://localhost:8080' + wsEndpoint.value + '/XXX/XXX/websocket')
-
     const socket = new SockJS(wsUrl)
     stompClient = webstomp.over(socket)
-    
-    stompClient.debug = (msg) => {
-      console.log('🔍 STOMP:', msg)
-    }
     
     const connectHeaders = {
       'Authorization': 'Bearer ' + accessToken.value
     }
     
-    console.log('\n📤 CONNECT 헤더:')
-    console.log('  Authorization: Bearer ' + accessToken.value.substring(0, 20) + '...')
-    console.log('  (전체 길이: ' + connectHeaders['Authorization'].length + ')')
-    
-    console.log('\n🔌 STOMP.connect() 호출...')
-    
     stompClient.connect(
       connectHeaders,
       function(frame) {
-        console.log('\n✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
-        console.log('Frame:', frame)
+        console.log('✅ WebSocket 연결 성공')
         isConnected.value = true
         loadRooms()
         resolve(frame)
       },
       function(error) {
-        console.log('\n❌❌❌ WebSocket CONNECT 실패 ❌❌❌')
-        console.error('Error:', error)
-        console.error('Error message:', error.headers?.message || error.body || 'Unknown')
-        
+        console.error('❌ WebSocket 연결 실패:', error)
         isConnected.value = false
-        
-        let errorMessage = 'WebSocket CONNECT 실패'
-        if (error && error.headers && error.headers.message) {
-          errorMessage += ': ' + error.headers.message
-        }
-        
-        console.error('\n🔍 확인할 사항:')
-        console.error('1. 서버 엔드포인트가 "' + wsEndpoint.value + '"가 맞는지?')
-        console.error('2. 서버 StompWebSocketConfig에서 registerStompEndpoints() 확인')
-        console.error('3. 브라우저 Network 탭에서 실제 연결되는 URL 확인')
-        
-        alert(errorMessage + '\n\n엔드포인트를 변경해보세요: /connect, /ws, /stomp, /websocket')
+        alert('WebSocket 연결 실패')
         reject(error)
       }
     )
     
     socket.onclose = function(e) {
-      console.log('🔴 SockJS 연결 종료:', e.code, e.reason)
+      console.log('WebSocket 연결 종료')
       isConnected.value = false
-    }
-    
-    socket.onerror = function(e) {
-      console.error('🔴 SockJS 에러:', e)
     }
   })
 }
@@ -522,9 +497,8 @@ const signup = async () => {
     }
 
     const responseData = await response.json()
-    console.log('회원가입 응답:', responseData)
-    
     const data = responseData.data
+    
     if (!data || !data.tokenInfo || !data.memberInfo) {
       alert('회원가입 응답 형식이 올바르지 않습니다.')
       return
@@ -571,14 +545,7 @@ const createPrivateRoom = async () => {
     return
   }
 
-  if (!isConnected.value || !stompClient) {
-    alert('WebSocket이 연결되지 않았습니다. 다시 로그인해주세요.')
-    return
-  }
-
   try {
-    console.log('💬 방 생성 시작...')
-    
     const response = await fetch(`${serverUrl.value}/v1/chat/private?otherMemberId=${otherMemberId.value}`, {
       method: 'POST',
       headers: {
@@ -595,19 +562,13 @@ const createPrivateRoom = async () => {
 
     const data = await response.json()
     const roomId = data.data || data.result || data
-    console.log('✅ 방 생성 성공! Room ID:', roomId)
     
     await loadRooms()
     
-    console.log('⏱️ 150ms 딜레이 후 방 선택...')
     setTimeout(() => {
       const newRoom = rooms.value.find(r => r.roomId === roomId)
       if (newRoom) {
-        console.log('🎯 새 방 선택:', newRoom)
         selectRoom(newRoom)
-      } else {
-        console.warn('⚠️ 새로 만들어진 방을 찾을 수 없습니다.')
-        alert(`채팅방이 생성되었습니다. Room ID: ${roomId}`)
       }
     }, 150)
     
@@ -618,9 +579,7 @@ const createPrivateRoom = async () => {
 }
 
 const loadRooms = async () => {
-  if (!accessToken.value) {
-    return
-  }
+  if (!accessToken.value) return
 
   try {
     const response = await fetch(`${serverUrl.value}/v1/chat/rooms/me?page=0&size=20`, {
@@ -632,9 +591,6 @@ const loadRooms = async () => {
     if (response.ok) {
       const responseData = await response.json()
       rooms.value = responseData.data?.content || responseData.result?.content || responseData.content || []
-      console.log('📋 방 목록 로드 완료:', rooms.value.length, '개')
-    } else {
-      console.error('채팅방 목록을 불러올 수 없습니다.')
     }
   } catch (error) {
     console.error('Error:', error)
@@ -643,50 +599,58 @@ const loadRooms = async () => {
 
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
-    console.error('❌ STOMP 클라이언트가 연결되지 않았습니다!')
-    alert('WebSocket 연결이 끊어졌습니다. 다시 로그인해주세요.')
+    alert('WebSocket 연결이 끊어졌습니다.')
     return
   }
 
-  console.log('👉 방 선택:', room.roomId)
-  
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
+  
+  // 무한 스크롤 상태 초기화
+  messages.value = []
+  nextBeforeSeq.value = null
+  hasMoreMessages.value = true
+  isFirstLoad.value = true
 
   if (subscription) {
-    console.log('🔴 기존 구독 해제')
     subscription.unsubscribe()
     subscription = null
   }
 
   const subscriptionPath = `/topic/chat/room/${room.roomId}`
-  console.log('📡 SUBSCRIBE 시도:', subscriptionPath)
   
   try {
     subscription = stompClient.subscribe(subscriptionPath, (message) => {
-      console.log('📩 메시지 수신:', message.body)
       const chatMessage = JSON.parse(message.body)
+      console.log('📩 실시간 메시지 수신:', chatMessage)
+      
+      // ✅ 서버가 ASC로 주므로 실시간 메시지는 맨 아래에 append
       messages.value.push(chatMessage)
       nextTick(() => scrollToBottom())
     })
-    
-    console.log('✅ SUBSCRIBE 성공!')
   } catch (error) {
     console.error('❌ SUBSCRIBE 실패:', error)
-    alert('채팅방 구독에 실패했습니다: ' + error.message)
+    alert('채팅방 구독에 실패했습니다.')
     return
   }
 
   loadMessages(room.roomId)
 }
 
-const loadMessages = async (roomId) => {
-  if (!accessToken.value) {
-    return
-  }
+const loadMessages = async (roomId, beforeSeq = null) => {
+  if (!accessToken.value || isLoadingMore.value) return
 
   try {
-    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/messages?size=50`, {
+    isLoadingMore.value = true
+    
+    let url = `${serverUrl.value}/v1/chat/rooms/${roomId}/messages?size=50`
+    if (beforeSeq) {
+      url += `&beforeSeq=${beforeSeq}`
+    }
+    
+    console.log('📨 메시지 로드 요청:', { beforeSeq, url })
+
+    const response = await fetch(url, {
       headers: {
         'Authorization': 'Bearer ' + accessToken.value
       }
@@ -695,29 +659,70 @@ const loadMessages = async (roomId) => {
     if (response.ok) {
       const responseData = await response.json()
       const messageList = responseData.data?.content || responseData.result?.content || responseData.content || []
+      const hasNext = responseData.data?.hasNext ?? responseData.result?.hasNext ?? false
+      
+      console.log('📨 서버 응답:', {
+        messageCount: messageList.length,
+        hasNext,
+        firstSeq: messageList[0]?.seq,
+        lastSeq: messageList[messageList.length - 1]?.seq,
+        firstMessageType: messageList[0]?.messageType || messageList[0]?.type,
+        firstContent: messageList[0]?.content,
+        firstFileUrl: messageList[0]?.fileUrl
+      })
 
-      messages.value = messageList.reverse()
-      console.log('📨 메시지 로드 완료:', messages.value.length, '개')
-
-      nextTick(() => scrollToBottom())
+      if (isFirstLoad.value) {
+        // ✅ 처음 로드: 서버가 ASC(과거→최신)로 주므로 그대로 사용
+        // 절대 reverse() 하면 안됨!
+        messages.value = messageList
+        isFirstLoad.value = false
+        nextTick(() => scrollToBottom())
+      } else {
+        // ✅ 무한 스크롤: 이전 메시지를 위에 prepend
+        const scrollHeight = messagesContainer.value.scrollHeight
+        messages.value = [...messageList, ...messages.value]
+        
+        // 스크롤 위치 유지
+        nextTick(() => {
+          const newScrollHeight = messagesContainer.value.scrollHeight
+          messagesContainer.value.scrollTop = newScrollHeight - scrollHeight
+        })
+      }
+      
+      // 다음 페이지 정보 업데이트
+      hasMoreMessages.value = hasNext
+      if (hasNext && messageList.length > 0) {
+        // ✅ 가장 오래된 메시지(= 배열의 첨 번째)의 seq를 beforeSeq로 사용
+        nextBeforeSeq.value = messageList[0].seq
+        console.log('🔼 nextBeforeSeq 설정:', nextBeforeSeq.value)
+      }
+      
       markAsRead(roomId)
-    } else {
-      console.error('메시지 불러오기 실패')
     }
   } catch (error) {
     console.error('Error:', error)
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+// ✅ 스크롤 이벤트 핸들러: 위로 스크롤 시 이전 메시지 로드
+const handleScroll = () => {
+  if (!messagesContainer.value || isLoadingMore.value || !hasMoreMessages.value) {
+    return
+  }
+  
+  // 스크롤이 상단 100px 이내에 있으면 이전 메시지 로드
+  if (messagesContainer.value.scrollTop < 100) {
+    console.log('🔼 이전 메시지 로드 트리거')
+    loadMessages(currentRoomId.value, nextBeforeSeq.value)
   }
 }
 
 const sendMessage = () => {
   const content = messageInput.value.trim()
 
-  if (!content || !currentRoomId.value) {
-    return
-  }
-
-  if (!stompClient || !isConnected.value) {
-    alert('WebSocket 연결이 끊어졌습니다.')
+  if (!content || !currentRoomId.value || !stompClient || !isConnected.value) {
     return
   }
 
@@ -731,18 +736,13 @@ const sendMessage = () => {
     fileSize: null
   }
 
-  console.log('📤 메시지 SEND:', message)
-
   try {
     stompClient.send(
       `/publish/${currentRoomId.value}`,
       JSON.stringify(message),
-      {
-        'content-type': 'application/json'
-      }
+      { 'content-type': 'application/json' }
     )
 
-    console.log('✅ 메시지 전송 완료')
     messageInput.value = ''
   } catch (error) {
     console.error('❌ 메시지 전송 실패:', error)
@@ -752,22 +752,16 @@ const sendMessage = () => {
 
 const triggerFileInput = (type) => {
   currentFileType.value = type
-  if (type === 'image') {
-    imageInput.value.click()
-  } else if (type === 'file') {
-    fileInput.value.click()
-  } else if (type === 'video') {
-    videoInput.value.click()
-  } else if (type === 'audio') {
-    audioInput.value.click()
-  }
+  if (type === 'image') imageInput.value.click()
+  else if (type === 'file') fileInput.value.click()
+  else if (type === 'video') videoInput.value.click()
+  else if (type === 'audio') audioInput.value.click()
 }
 
 const handleFileSelect = async (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  // 파일 크기 체크 (예: 10MB)
   const maxSize = 10 * 1024 * 1024
   if (file.size > maxSize) {
     alert('파일 크기는 10MB를 초과할 수 없습니다.')
@@ -776,22 +770,13 @@ const handleFileSelect = async (event) => {
 
   try {
     uploadProgress.value = 0
-    
-    // 실제로는 서버에 파일을 업로드하고 URL을 받아야 합니다.
-    // 여기서는 시뮬레이션을 위해 간단히 처리합니다.
     const fileUrl = await uploadFile(file)
     
-    // 메시지 타입 결정
     let messageType
-    if (currentFileType.value === 'image') {
-      messageType = MessageType.IMAGE
-    } else if (currentFileType.value === 'video') {
-      messageType = MessageType.VIDEO
-    } else if (currentFileType.value === 'audio') {
-      messageType = MessageType.AUDIO
-    } else {
-      messageType = MessageType.FILE
-    }
+    if (currentFileType.value === 'image') messageType = MessageType.IMAGE
+    else if (currentFileType.value === 'video') messageType = MessageType.VIDEO
+    else if (currentFileType.value === 'audio') messageType = MessageType.AUDIO
+    else messageType = MessageType.FILE
 
     const message = {
       roomId: currentRoomId.value,
@@ -803,78 +788,45 @@ const handleFileSelect = async (event) => {
       fileSize: file.size
     }
 
-    console.log('📤 파일 메시지 SEND:', message)
-
     stompClient.send(
       `/publish/${currentRoomId.value}`,
       JSON.stringify(message),
-      {
-        'content-type': 'application/json'
-      }
+      { 'content-type': 'application/json' }
     )
 
-    console.log('✅ 파일 메시지 전송 완료')
     messageInput.value = ''
     uploadProgress.value = 0
-    
-    // 입력 필드 초기화
     event.target.value = ''
   } catch (error) {
     console.error('❌ 파일 전송 실패:', error)
-    alert('파일 전송에 실패했습니다: ' + error.message)
+    alert('파일 전송에 실패했습니다.')
     uploadProgress.value = 0
   }
 }
 
-// 파일 업로드 함수 (실제로는 서버로 업로드해야 함)
 const uploadFile = async (file) => {
-  // 이 부분은 실제 서버 API에 맞춰 구현해야 합니다.
-  // 여기서는 시뮬레이션을 위해 FormData를 사용하여 업로드하는 예시를 보여줍니다.
-  
-  return new Promise((resolve, reject) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    // 업로드 진행상황 시뮬레이션
+  // 실제로는 서버로 업로드해야 함
+  return new Promise((resolve) => {
     let progress = 0
     const interval = setInterval(() => {
       progress += 10
       uploadProgress.value = progress
       if (progress >= 100) {
         clearInterval(interval)
-        
-        // 실제로는 서버에서 받은 URL을 사용해야 합니다.
-        // 여기서는 임시로 blob URL을 생성합니다.
         const blobUrl = URL.createObjectURL(file)
         resolve(blobUrl)
-        
-        // 실제 서버 업로드 예시:
-        // fetch(`${serverUrl.value}/v1/chat/upload`, {
-        //   method: 'POST',
-        //   headers: {
-        //     'Authorization': 'Bearer ' + accessToken.value
-        //   },
-        //   body: formData
-        // })
-        // .then(response => response.json())
-        // .then(data => resolve(data.fileUrl))
-        // .catch(error => reject(error))
       }
     }, 100)
   })
 }
 
 const markAsRead = async (roomId) => {
-  if (!accessToken.value) {
-    return
-  }
+  if (!accessToken.value) return
 
   try {
     await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
       method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + accessToken.value
-      }
+      headers: { 'Authorization': 'Bearer ' + accessToken.value }
     })
   } catch (error) {
     console.error('읽음 처리 실패:', error)
@@ -883,22 +835,15 @@ const markAsRead = async (roomId) => {
 
 const leaveRoom = async () => {
   if (!currentRoomId.value || !accessToken.value) return
-
-  if (!confirm('정말 이 채팅방을 나가시겠습니까?')) {
-    return
-  }
+  if (!confirm('정말 이 채팅방을 나가시겠습니까?')) return
 
   try {
     const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${currentRoomId.value}`, {
       method: 'DELETE',
-      headers: {
-        'Authorization': 'Bearer ' + accessToken.value
-      }
+      headers: { 'Authorization': 'Bearer ' + accessToken.value }
     })
 
     if (response.ok) {
-      alert('채팅방을 나갔습니다.')
-      
       if (subscription) {
         subscription.unsubscribe()
         subscription = null
@@ -908,12 +853,10 @@ const leaveRoom = async () => {
       currentRoomName.value = ''
       messages.value = []
       loadRooms()
-    } else {
-      alert('채팅방 나가기 실패')
+      alert('채팅방을 나갔습니다.')
     }
   } catch (error) {
     console.error('Error:', error)
-    alert('채팅방 나가기 중 오류가 발생했습니다.')
   }
 }
 
