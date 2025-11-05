@@ -598,7 +598,7 @@ const signup = async () => {
 
     if (!response.ok) {
       const errorData = await response.json()
-      alert('회원가입 실패: ' + (errorData.message || '오류가 발생했습니다.'))}
+      alert('회원가입 실패: ' + (errorData.message || '오류가 발생했습니다.'))
       return
     }
 
