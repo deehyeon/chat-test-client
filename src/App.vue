@@ -434,7 +434,7 @@ const connectWebSocket = () => {
         console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
         isConnected.value = true
         
-        // ✅ 개인 큐 구독 (이 줄을 반드시 추가)
+        // ✅ 개인 큐 구독
         subscribeRoomSummary()
         
         loadRooms()
@@ -455,7 +455,7 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ 1️⃣ 개인 큐 구독 함수 추가
+// ✅ 개인 큐 구독 함수
 function subscribeRoomSummary() {
   if (!stompClient) {
     console.error('❌ STOMP 클라이언트가 없습니다.')
@@ -464,7 +464,6 @@ function subscribeRoomSummary() {
 
   console.log('📡 /user/queue/room-summary 구독 시도...')
 
-  // /user/queue/room-summary 구독
   stompClient.subscribe('/user/queue/room-summary', (frame) => {
     try {
       const summary = JSON.parse(frame.body)
@@ -474,13 +473,12 @@ function subscribeRoomSummary() {
       const preview = summary.preview || ''
       const unread = summary.unread || 0
 
-      // rooms 배열 갱신 (미리보기 / unreadCount 업데이트)
+      // rooms 배열 갱신
       const idx = rooms.value.findIndex(r => r.roomId === roomId)
       if (idx !== -1) {
         rooms.value[idx].lastMessagePreview = preview
         rooms.value[idx].unreadCount = unread
       } else {
-        // 혹시 새로 생긴 방이라면 추가
         rooms.value.unshift({
           roomId,
           type: 'PRIVATE',
@@ -560,7 +558,6 @@ const signup = async () => {
   }
 }
 
-// ✅ 3️⃣ disconnect 수정
 const disconnect = () => {
   if (stompClient) {
     stompClient.disconnect()
@@ -619,6 +616,7 @@ const createPrivateRoom = async () => {
   }
 }
 
+// ✅ 필드명 매핑 추가 (unreadCount 우선)
 const loadRooms = async () => {
   if (!accessToken.value) return
 
@@ -632,9 +630,17 @@ const loadRooms = async () => {
     if (response.ok) {
       const responseData = await response.json()
       const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
-      rooms.value = roomList
       
-      console.log(`📋 방 목록 로드: ${roomList.length}개`)
+      // ✅ 서버 DTO 필드명 매핑
+      rooms.value = roomList.map(r => ({
+        roomId: r.roomId,
+        type: r.type,
+        lastMessagePreview: r.lastMessagePreview ?? r.preview ?? '',
+        unreadCount: r.unreadCount ?? r.unread ?? 0,
+        lastMessageAt: r.lastMessageAt
+      }))
+      
+      console.log(`📋 방 목록 로드: ${rooms.value.length}개`)
     }
   } catch (error) {
     console.error('Error:', error)
