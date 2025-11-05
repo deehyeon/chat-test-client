@@ -349,6 +349,7 @@ const currentFileType = ref('')
 // 개인 큐 구독 참조
 let unreadSubscription = null
 let roomSummarySubscription = null
+let roomSummaryTopicSubscription = null  // 토픽 방식 구독 (옵션)
 
 const signupForm = ref({
   type: 'individual',
@@ -561,35 +562,60 @@ const subscribeToUnreadQueue = () => {
 }
 
 // 채팅방 요약 정보 실시간 업데이트를 위한 개인 큐 구독
+// 서버는 두 가지 방식으로 전송:
+//   1. messagingTemplate.convertAndSendToUser(uid, "/queue/room-summary", data)
+//   2. messagingTemplate.convertAndSend("/topic/room-summary/" + uid, data)
+// 표준 개인 큐 방식(/user/queue/*)이 더 안전하므로 이 방식을 사용
 const subscribeToRoomSummaryQueue = () => {
   if (!stompClient || roomSummarySubscription) return
   
   try {
+    // 방법 1: 개인 큐 구독 (표준 방식, 권장)
     roomSummarySubscription = stompClient.subscribe('/user/queue/room-summary', (frame) => {
       const data = JSON.parse(frame.body)
-      console.log('📨 채팅방 요약 업데이트:', data)
-      
-      // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread }
-      if (data.roomId) {
-        // 방 정보 업데이트
-        updateRoomInfo(data.roomId, {
-          lastMessagePreview: data.lastMessagePreview,
-          lastMessageAt: data.lastMessageAt,
-          lastMessageSeq: data.lastMessageSeq
-        })
-        
-        // 읽지 않은 메시지 수 업데이트
-        if (data.unread !== undefined) {
-          unreadByRoom.value[data.roomId] = data.unread
-        }
-        
-        // 최신 메시지 시각 기준으로 재정렬
-        sortRoomsByLatest()
-      }
+      console.log('📨 채팅방 요약 업데이트 (개인 큐):', data)
+      handleRoomSummaryUpdate(data)
     })
-    console.log('✅ 채팅방 요약 큐 구독 성공')
+    console.log('✅ 채팅방 요약 큐 구독 성공 (개인 큐)')
+    
+    // 방법 2: 토픽 구독 (옵션, 필요시 주석 해제)
+    // 참고: /topic/* 방식은 보안상 다른 사용자가 구독할 수 있으므로 권장하지 않음
+    /*
+    if (currentMemberId.value) {
+      roomSummaryTopicSubscription = stompClient.subscribe(
+        `/topic/room-summary/${currentMemberId.value}`, 
+        (frame) => {
+          const data = JSON.parse(frame.body)
+          console.log('📨 채팅방 요약 업데이트 (토픽):', data)
+          handleRoomSummaryUpdate(data)
+        }
+      )
+      console.log('✅ 채팅방 요약 토픽 구독 성공')
+    }
+    */
   } catch (error) {
     console.error('❌ 채팅방 요약 큐 구독 실패:', error)
+  }
+}
+
+// 채팅방 요약 업데이트 처리 (공통 로직)
+const handleRoomSummaryUpdate = (data) => {
+  // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread }
+  if (data.roomId) {
+    // 방 정보 업데이트
+    updateRoomInfo(data.roomId, {
+      lastMessagePreview: data.lastMessagePreview,
+      lastMessageAt: data.lastMessageAt,
+      lastMessageSeq: data.lastMessageSeq
+    })
+    
+    // 읽지 않은 메시지 수 업데이트
+    if (data.unread !== undefined) {
+      unreadByRoom.value[data.roomId] = data.unread
+    }
+    
+    // 최신 메시지 시각 기준으로 재정렬
+    sortRoomsByLatest()
   }
 }
 
@@ -668,6 +694,10 @@ const disconnect = () => {
     if (roomSummarySubscription) {
       roomSummarySubscription.unsubscribe()
       roomSummarySubscription = null
+    }
+    if (roomSummaryTopicSubscription) {
+      roomSummaryTopicSubscription.unsubscribe()
+      roomSummaryTopicSubscription = null
     }
     stompClient.disconnect()
     stompClient = null
