@@ -186,6 +186,13 @@ body {
   color: #666;
 }
 
+.room-time {
+  font-size: 11px;
+  color: #999;
+  margin-top: 3px;
+  font-style: italic;
+}
+
 .chat-area {
   flex: 1;
   display: flex;

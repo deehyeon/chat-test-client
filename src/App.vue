@@ -77,6 +77,9 @@
             <p :class="['room-preview', { empty: !room.lastMessagePreview }]">
               {{ room.lastMessagePreview || '메시지가 없습니다' }}
             </p>
+            <p v-if="room.lastMessageAt" class="room-time">
+              {{ formatLastMessageTime(room.lastMessageAt) }}
+            </p>
           </div>
         </div>
       </div>
@@ -345,6 +348,7 @@ const currentFileType = ref('')
 
 // 개인 큐 구독 참조
 let unreadSubscription = null
+let roomSummarySubscription = null
 
 const signupForm = ref({
   type: 'individual',
@@ -413,6 +417,35 @@ const markReadDebounced = (roomId) => {
       console.error('❌ 읽음 처리 실패:', error)
     }
   }, 400)
+}
+
+// 채팅방 정보 업데이트 (upsert)
+const updateRoomInfo = (roomId, updates) => {
+  const roomIndex = rooms.value.findIndex(r => r.roomId === roomId)
+  
+  if (roomIndex !== -1) {
+    // 기존 방 업데이트
+    const room = rooms.value[roomIndex]
+    rooms.value[roomIndex] = {
+      ...room,
+      ...updates
+    }
+    console.log('🔄 방 정보 업데이트:', roomId, updates)
+  } else {
+    // 새 방 추가 (한 경우 - 다른 사람이 새로 방을 만들어 초대한 경우)
+    console.log('✨ 새 방 추가:', roomId)
+    // 전체 목록을 다시 불러오는 것이 안전
+    loadRooms()
+  }
+}
+
+// 채팅방 목록을 최신 메시지 시각 기준으로 정렬
+const sortRoomsByLatest = () => {
+  rooms.value.sort((a, b) => {
+    const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
+    const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
+    return timeB - timeA  // 내림차순 (최신이 먼저)
+  })
 }
 
 const login = async () => {
@@ -486,6 +519,9 @@ const connectWebSocket = () => {
         // 읽지 않은 메시지 수 실시간 동기화를 위한 개인 큐 구독
         subscribeToUnreadQueue()
         
+        // 채팅방 요약 정보 실시간 업데이트를 위한 개인 큐 구독
+        subscribeToRoomSummaryQueue()
+        
         loadRooms()
         resolve(frame)
       },
@@ -521,6 +557,39 @@ const subscribeToUnreadQueue = () => {
     console.log('✅ 읽지 않은 메시지 큐 구독 성공')
   } catch (error) {
     console.error('❌ 읽지 않은 메시지 큐 구독 실패:', error)
+  }
+}
+
+// 채팅방 요약 정보 실시간 업데이트를 위한 개인 큐 구독
+const subscribeToRoomSummaryQueue = () => {
+  if (!stompClient || roomSummarySubscription) return
+  
+  try {
+    roomSummarySubscription = stompClient.subscribe('/user/queue/room-summary', (frame) => {
+      const data = JSON.parse(frame.body)
+      console.log('📨 채팅방 요약 업데이트:', data)
+      
+      // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread }
+      if (data.roomId) {
+        // 방 정보 업데이트
+        updateRoomInfo(data.roomId, {
+          lastMessagePreview: data.lastMessagePreview,
+          lastMessageAt: data.lastMessageAt,
+          lastMessageSeq: data.lastMessageSeq
+        })
+        
+        // 읽지 않은 메시지 수 업데이트
+        if (data.unread !== undefined) {
+          unreadByRoom.value[data.roomId] = data.unread
+        }
+        
+        // 최신 메시지 시각 기준으로 재정렬
+        sortRoomsByLatest()
+      }
+    })
+    console.log('✅ 채팅방 요약 큐 구독 성공')
+  } catch (error) {
+    console.error('❌ 채팅방 요약 큐 구독 실패:', error)
   }
 }
 
@@ -595,6 +664,10 @@ const disconnect = () => {
     if (unreadSubscription) {
       unreadSubscription.unsubscribe()
       unreadSubscription = null
+    }
+    if (roomSummarySubscription) {
+      roomSummarySubscription.unsubscribe()
+      roomSummarySubscription = null
     }
     stompClient.disconnect()
     stompClient = null
@@ -673,6 +746,9 @@ const loadRooms = async () => {
           unreadByRoom.value[room.roomId] = room.unreadCount
         }
       })
+      
+      // 최신 메시지 시각 기준으로 정렬
+      sortRoomsByLatest()
     }
   } catch (error) {
     console.error('Error:', error)
@@ -949,6 +1025,43 @@ const formatTime = (timestamp) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+const formatLastMessageTime = (timestamp) => {
+  if (!timestamp) return ''
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diff = now.getTime() - date.getTime()
+  
+  // 1분 미만
+  if (diff < 60000) {
+    return '방금'
+  }
+  
+  // 1시간 미만
+  if (diff < 3600000) {
+    return Math.floor(diff / 60000) + '분 전'
+  }
+  
+  // 오늘
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  }
+  
+  // 어제
+  const yesterday = new Date(now)
+  yesterday.setDate(yesterday.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) {
+    return '어제'
+  }
+  
+  // 올해
+  if (date.getFullYear() === now.getFullYear()) {
+    return (date.getMonth() + 1) + '월 ' + date.getDate() + '일'
+  }
+  
+  // 작년 이전
+  return date.getFullYear() + '년 ' + (date.getMonth() + 1) + '월 ' + date.getDate() + '일'
 }
 
 const formatFileSize = (bytes) => {
