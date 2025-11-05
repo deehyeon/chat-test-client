@@ -503,7 +503,7 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ /user/queue/room-summary 구독 함수
+// ✅ /user/queue/room-summary 구독 함수 (Vue 3 반응형 최적화)
 function subscribeRoomSummary() {
   if (!stompClient || !isConnected.value) {
     console.warn('❌ STOMP 클라이언트가 연결되지 않았습니다. 구독 실패')
@@ -517,31 +517,28 @@ function subscribeRoomSummary() {
       const summary = JSON.parse(message.body)
       console.log('📩 [room-summary 수신]', summary)
 
-      // 🧠 방 목록 실시간 업데이트 로직
-      const idx = rooms.value.findIndex(r => r.roomId === summary.roomId)
+      // rooms.value 복사
+      const updatedRooms = [...rooms.value]
+
+      const idx = updatedRooms.findIndex(r => r.roomId === summary.roomId)
       
       if (idx !== -1) {
-        // 기존 방 → 미리보기, 읽지 않은 메시지 수 갱신
-        const room = rooms.value[idx]
-        room.lastMessagePreview = summary.lastMessagePreview
-        room.lastMessageAt = summary.lastMessageAt
-        room.lastMessageSeq = summary.lastMessageSeq
-        
-        // 현재 보고 있는 방이 아닐 때만 unread 업데이트
-        if (currentRoomId.value !== summary.roomId) {
-          room.unreadCount = summary.unread || 0
-        } else {
-          // 현재 보고 있는 방이면 unread는 0 유지
-          room.unreadCount = 0
+        // 기존 방 업데이트 (스프레드로 새 객체 생성)
+        updatedRooms[idx] = {
+          ...updatedRooms[idx],
+          lastMessagePreview: summary.lastMessagePreview,
+          lastMessageAt: summary.lastMessageAt,
+          lastMessageSeq: summary.lastMessageSeq,
+          unreadCount: currentRoomId.value !== summary.roomId ? (summary.unread || 0) : 0
         }
-        
-        // 방을 맨 위로 이동
-        const updated = rooms.value.splice(idx, 1)[0]
-        rooms.value.unshift(updated)
+
+        // 맨 위로 이동
+        const room = updatedRooms.splice(idx, 1)[0]
+        updatedRooms.unshift(room)
       } else {
-        // 새로운 방일 경우 목록에 추가
+        // 새로운 방 추가
         console.log('✨ 새로운 방 추가:', summary.roomId)
-        rooms.value.unshift({
+        updatedRooms.unshift({
           roomId: summary.roomId,
           lastMessagePreview: summary.lastMessagePreview,
           lastMessageAt: summary.lastMessageAt,
@@ -551,8 +548,9 @@ function subscribeRoomSummary() {
         })
       }
 
-      // Vue 반응형 업데이트 보장
-      rooms.value = [...rooms.value]
+      // ✅ Vue 반응형 트리거 (참조 변경)
+      rooms.value = updatedRooms
+      console.log('✅ 목록 갱신 완료:', updatedRooms)
     })
 
     console.log('✅ /user/queue/room-summary 구독 성공')
