@@ -455,7 +455,7 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ 개인 큐 구독 함수
+// ✅ 개인 큐 구독 - lastMessageAt 포함, 최신순 정렬 추가
 function subscribeRoomSummary() {
   if (!stompClient) {
     console.error('❌ STOMP 클라이언트가 없습니다.')
@@ -470,24 +470,38 @@ function subscribeRoomSummary() {
       console.log('📬 [room-summary 수신]', summary)
 
       const roomId = summary.roomId
-      const preview = summary.preview || ''
-      const unread = summary.unread || 0
+      const preview = summary.lastMessagePreview || summary.preview || ''
+      const unread = summary.unreadCount || summary.unread || 0
+      const lastMessageAt = summary.lastMessageAt || new Date().toISOString()
+      const type = summary.type || 'PRIVATE'
 
       // rooms 배열 갱신
       const idx = rooms.value.findIndex(r => r.roomId === roomId)
       if (idx !== -1) {
         rooms.value[idx].lastMessagePreview = preview
         rooms.value[idx].unreadCount = unread
+        rooms.value[idx].lastMessageAt = lastMessageAt
+        rooms.value[idx].type = type
       } else {
-        rooms.value.unshift({
+        // 새 방 추가
+        rooms.value.push({
           roomId,
-          type: 'PRIVATE',
+          type,
           lastMessagePreview: preview,
-          unreadCount: unread
+          unreadCount: unread,
+          lastMessageAt
         })
       }
 
-      console.log(`✅ 방 ${roomId} 요약 업데이트: preview="${preview}", unread=${unread}`)
+      // ✅ 최신순 정렬 (lastMessageAt 기준)
+      rooms.value.sort((a, b) => {
+        const timeA = new Date(a.lastMessageAt || 0).getTime()
+        const timeB = new Date(b.lastMessageAt || 0).getTime()
+        return timeB - timeA
+      })
+
+      console.log(`✅ 방 ${roomId} 요약 업데이트: preview="${preview}", unread=${unread}, time=${lastMessageAt}`)
+      console.log('📋 현재 방 목록:', rooms.value.length, '개')
     } catch (e) {
       console.error('room-summary 파싱 오류:', e, frame.body)
     }
@@ -616,7 +630,6 @@ const createPrivateRoom = async () => {
   }
 }
 
-// ✅ 필드명 매핑 추가 (unreadCount 우선)
 const loadRooms = async () => {
   if (!accessToken.value) return
 
@@ -631,7 +644,7 @@ const loadRooms = async () => {
       const responseData = await response.json()
       const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
       
-      // ✅ 서버 DTO 필드명 매핑
+      // ✅ 서버 DTO 필드명 매핑 + lastMessageAt 포함
       rooms.value = roomList.map(r => ({
         roomId: r.roomId,
         type: r.type,
@@ -639,6 +652,13 @@ const loadRooms = async () => {
         unreadCount: r.unreadCount ?? r.unread ?? 0,
         lastMessageAt: r.lastMessageAt
       }))
+      
+      // ✅ 최신순 정렬
+      rooms.value.sort((a, b) => {
+        const timeA = new Date(a.lastMessageAt || 0).getTime()
+        const timeB = new Date(b.lastMessageAt || 0).getTime()
+        return timeB - timeA
+      })
       
       console.log(`📋 방 목록 로드: ${rooms.value.length}개`)
     }
@@ -657,6 +677,12 @@ const selectRoom = (room) => {
 
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
+  
+  // ✅ 방 입장 시 해당 방의 unreadCount 즉시 0으로 설정
+  const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
+  if (idx !== -1) {
+    rooms.value[idx].unreadCount = 0
+  }
   
   messages.value = []
   nextBeforeSeq.value = null
