@@ -330,9 +330,6 @@ const showImageModal = ref(false)
 const currentImage = ref('')
 const uploadProgress = ref(0)
 
-// 읽지 않은 메시지 수 관리 (실시간 업데이트를 위한 로컬 상태)
-const unreadByRoom = ref({})
-
 // 무한 스크롤 관련 상태
 const isLoadingMore = ref(false)
 const hasMoreMessages = ref(true)
@@ -346,11 +343,6 @@ const videoInput = ref(null)
 const audioInput = ref(null)
 const currentFileType = ref('')
 
-// 개인 큐 구독 참조
-let unreadSubscription = null
-let roomSummarySubscription = null
-let roomSummaryTopicSubscription = null  // 토픽 방식 구독 (옵션)
-
 const signupForm = ref({
   type: 'individual',
   companyId: '',
@@ -363,6 +355,7 @@ const signupForm = ref({
 
 let stompClient = null
 let subscription = null
+let roomSummarySubscription = null
 
 // 디바운스 타이머
 let markReadDebounceTimer = null
@@ -376,7 +369,8 @@ const statusText = computed(() => {
 
 // 읽지 않은 메시지 수 가져오기
 const getUnreadCount = (roomId) => {
-  return unreadByRoom.value[roomId] || 0
+  const room = rooms.value.find(r => r.roomId === roomId)
+  return room?.unreadCount || 0
 }
 
 // 메시지 타입 가져오기
@@ -402,9 +396,6 @@ const markReadDebounced = (roomId) => {
   }
   
   markReadDebounceTimer = setTimeout(async () => {
-    // 내관적 업데이트
-    unreadByRoom.value[roomId] = 0
-    
     // 서버 반영
     try {
       await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
@@ -418,52 +409,6 @@ const markReadDebounced = (roomId) => {
       console.error('❌ 읽음 처리 실패:', error)
     }
   }, 400)
-}
-
-// 채팅방 정보 업데이트 (upsert)
-const updateRoomInfo = (roomId, updates) => {
-  const roomIndex = rooms.value.findIndex(r => r.roomId === roomId)
-  
-  if (roomIndex !== -1) {
-    // 기존 방 업데이트
-    const room = rooms.value[roomIndex]
-    rooms.value[roomIndex] = {
-      ...room,
-      ...updates
-    }
-    console.log('🔄 방 정보 업데이트:', roomId, updates)
-  } else {
-    // 새 방 추가 (다른 사람이 새로 방을 만들어 초대한 경우)
-    console.log('✨ 새 방 추가:', roomId, updates)
-    rooms.value.push({
-      roomId: roomId,
-      type: 'PRIVATE', // 기본값
-      lastMessagePreview: updates.lastMessagePreview || '',
-      lastMessageAt: updates.lastMessageAt || new Date().toISOString(),
-      lastMessageSeq: updates.lastMessageSeq || 0,
-      unreadCount: 0 // 새 방이므로 unread는 별도로 처리
-    })
-  }
-}
-
-// 특정 방을 맨 위로 올리는 정렬
-const moveRoomToTop = (roomId) => {
-  const roomIndex = rooms.value.findIndex(r => r.roomId === roomId)
-  if (roomIndex > 0) {
-    // roomIndex가 0보다 크면 맨 위로 이동
-    const [room] = rooms.value.splice(roomIndex, 1)
-    rooms.value.unshift(room)
-    console.log('⬆️ 방을 맨 위로 이동:', roomId)
-  }
-}
-
-// 채팅방 목록을 최신 메시지 시각 기준으로 정렬
-const sortRoomsByLatest = () => {
-  rooms.value.sort((a, b) => {
-    const timeA = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0
-    const timeB = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0
-    return timeB - timeA  // 내림차순 (최신이 먼저)
-  })
 }
 
 const login = async () => {
@@ -531,16 +476,16 @@ const connectWebSocket = () => {
     stompClient.connect(
       connectHeaders,
       function(frame) {
-        console.log('✅ WebSocket 연결 성공')
+        console.log('\n✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
+        console.log('Frame:', frame)
         isConnected.value = true
         
-        // 읽지 않은 메시지 수 실시간 동기화를 위한 개인 큐 구독
-        subscribeToUnreadQueue()
+        // ✅ 로그인 직후 개인 큐 구독 추가
+        subscribeRoomSummary()
         
-        // 채팅방 요약 정보 실시간 업데이트를 위한 개인 큐 구독
-        subscribeToRoomSummaryQueue()
-        
+        // ✅ 채팅방 목록 불러오기
         loadRooms()
+        
         resolve(frame)
       },
       function(error) {
@@ -558,100 +503,61 @@ const connectWebSocket = () => {
   })
 }
 
-// 읽지 않은 메시지 수 실시간 동기화를 위한 개인 큐 구독
-const subscribeToUnreadQueue = () => {
-  if (!stompClient || unreadSubscription) return
-  
+// ✅ /user/queue/room-summary 구독 함수
+function subscribeRoomSummary() {
+  if (!stompClient || !isConnected.value) {
+    console.warn('❌ STOMP 클라이언트가 연결되지 않았습니다. 구독 실패')
+    return
+  }
+
+  console.log('📡 /user/queue/room-summary 구독 시도')
+
   try {
-    unreadSubscription = stompClient.subscribe('/user/queue/unread', (frame) => {
-      const data = JSON.parse(frame.body)
-      console.log('🔔 읽지 않은 메시지 수 업데이트:', data)
+    roomSummarySubscription = stompClient.subscribe('/user/queue/room-summary', (message) => {
+      const summary = JSON.parse(message.body)
+      console.log('📩 [room-summary 수신]', summary)
+
+      // 🧠 방 목록 실시간 업데이트 로직
+      const idx = rooms.value.findIndex(r => r.roomId === summary.roomId)
       
-      // roomId와 unread 수 업데이트
-      if (data.roomId !== undefined && data.unread !== undefined) {
-        unreadByRoom.value[data.roomId] = data.unread
-      }
-    })
-    console.log('✅ 읽지 않은 메시지 큐 구독 성공')
-  } catch (error) {
-    console.error('❌ 읽지 않은 메시지 큐 구독 실패:', error)
-  }
-}
-
-// 채팅방 요약 정보 실시간 업데이트를 위한 개인 큐 구독
-// 서버는 두 가지 방식으로 전송:
-//   1. messagingTemplate.convertAndSendToUser(uid, "/queue/room-summary", data)
-//   2. messagingTemplate.convertAndSend("/topic/room-summary/" + uid, data)
-// 표준 개인 큐 방식(/user/queue/*)이 더 안전하므로 이 방식을 사용
-const subscribeToRoomSummaryQueue = () => {
-  if (!stompClient || roomSummarySubscription) return
-  
-  try {
-    // 방법 1: 개인 큐 구독 (표준 방식, 권장)
-    roomSummarySubscription = stompClient.subscribe('/user/queue/room-summary', (frame) => {
-      const data = JSON.parse(frame.body)
-      console.log('📨 채팅방 요약 업데이트 (개인 큐):', data)
-      handleRoomSummaryUpdate(data)
-    })
-    console.log('✅ 채팅방 요약 큐 구독 성공 (개인 큐)')
-    
-    // 방법 2: 토픽 구독 (옵션, 필요시 주석 해제)
-    // 참고: /topic/* 방식은 보안상 다른 사용자가 구독할 수 있으므로 권장하지 않음
-    /*
-    if (currentMemberId.value) {
-      roomSummaryTopicSubscription = stompClient.subscribe(
-        `/topic/room-summary/${currentMemberId.value}`, 
-        (frame) => {
-          const data = JSON.parse(frame.body)
-          console.log('📨 채팅방 요약 업데이트 (토픽):', data)
-          handleRoomSummaryUpdate(data)
+      if (idx !== -1) {
+        // 기존 방 → 미리보기, 읽지 않은 메시지 수 갱신
+        const room = rooms.value[idx]
+        room.lastMessagePreview = summary.lastMessagePreview
+        room.lastMessageAt = summary.lastMessageAt
+        room.lastMessageSeq = summary.lastMessageSeq
+        
+        // 현재 보고 있는 방이 아닐 때만 unread 업데이트
+        if (currentRoomId.value !== summary.roomId) {
+          room.unreadCount = summary.unread || 0
+        } else {
+          // 현재 보고 있는 방이면 unread는 0 유지
+          room.unreadCount = 0
         }
-      )
-      console.log('✅ 채팅방 요약 토픽 구독 성공')
-    }
-    */
-  } catch (error) {
-    console.error('❌ 채팅방 요약 큐 구독 실패:', error)
-  }
-}
+        
+        // 방을 맨 위로 이동
+        const updated = rooms.value.splice(idx, 1)[0]
+        rooms.value.unshift(updated)
+      } else {
+        // 새로운 방일 경우 목록에 추가
+        console.log('✨ 새로운 방 추가:', summary.roomId)
+        rooms.value.unshift({
+          roomId: summary.roomId,
+          lastMessagePreview: summary.lastMessagePreview,
+          lastMessageAt: summary.lastMessageAt,
+          lastMessageSeq: summary.lastMessageSeq,
+          unreadCount: summary.unread || 0,
+          type: summary.type || 'PRIVATE'
+        })
+      }
 
-// 채팅방 요약 업데이트 처리 (공통 로직)
-const handleRoomSummaryUpdate = (data) => {
-  // { roomId, lastMessagePreview, lastMessageSeq, lastMessageAt, unread, senderId }
-  if (!data.roomId) return
-  
-  const roomId = data.roomId
-  
-  // 현재 보고 있는 방이 아닐 때만 unread 업데이트
-  if (currentRoomId.value !== roomId) {
-    console.log('📬 다른 방의 메시지 - unread 증가:', roomId)
-    
-    // 방 정보 업데이트
-    updateRoomInfo(roomId, {
-      lastMessagePreview: data.lastMessagePreview,
-      lastMessageAt: data.lastMessageAt,
-      lastMessageSeq: data.lastMessageSeq
+      // Vue 반응형 업데이트 보장
+      rooms.value = [...rooms.value]
     })
-    
-    // 읽지 않은 메시지 수 업데이트
-    if (data.unread !== undefined) {
-      unreadByRoom.value[roomId] = data.unread
-    }
-    
-    // 방을 맨 위로 이동
-    moveRoomToTop(roomId)
-  } else {
-    console.log('📭 현재 방의 메시지 - unread 유지:', roomId)
-    
-    // 현재 보고 있는 방이면 방 정보만 업데이트하고 unread는 0 유지
-    updateRoomInfo(roomId, {
-      lastMessagePreview: data.lastMessagePreview,
-      lastMessageAt: data.lastMessageAt,
-      lastMessageSeq: data.lastMessageSeq
-    })
-    
-    // unread는 0으로 유지 (이미 보고 있는 방이므로)
-    unreadByRoom.value[roomId] = 0
+
+    console.log('✅ /user/queue/room-summary 구독 성공')
+  } catch (error) {
+    console.error('❌ /user/queue/room-summary 구독 실패:', error)
   }
 }
 
@@ -692,7 +598,7 @@ const signup = async () => {
 
     if (!response.ok) {
       const errorData = await response.json()
-      alert('회원가입 실패: ' + (errorData.message || '오류가 발생했습니다.'))
+      alert('회원가입 실패: ' + (errorData.message || '오류가 발생했습니다.'))}
       return
     }
 
@@ -723,17 +629,9 @@ const disconnect = () => {
       subscription.unsubscribe()
       subscription = null
     }
-    if (unreadSubscription) {
-      unreadSubscription.unsubscribe()
-      unreadSubscription = null
-    }
     if (roomSummarySubscription) {
       roomSummarySubscription.unsubscribe()
       roomSummarySubscription = null
-    }
-    if (roomSummaryTopicSubscription) {
-      roomSummaryTopicSubscription.unsubscribe()
-      roomSummaryTopicSubscription = null
     }
     stompClient.disconnect()
     stompClient = null
@@ -744,7 +642,6 @@ const disconnect = () => {
   accessToken.value = null
   rooms.value = []
   messages.value = []
-  unreadByRoom.value = {}
 }
 
 const createPrivateRoom = async () => {
@@ -806,15 +703,7 @@ const loadRooms = async () => {
       const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
       rooms.value = roomList
       
-      // 초기 읽지 않은 메시지 수 동기화
-      roomList.forEach(room => {
-        if (room.unreadCount !== undefined) {
-          unreadByRoom.value[room.roomId] = room.unreadCount
-        }
-      })
-      
-      // 최신 메시지 시각 기준으로 정렬
-      sortRoomsByLatest()
+      console.log(`📋 방 목록 로드 완료: ${roomList.length} 개`)
     }
   } catch (error) {
     console.error('Error:', error)
@@ -832,7 +721,10 @@ const enterRoom = (room) => {
   currentRoomName.value = `채팅방 ${room.roomId}`
   
   // 방 입장 시 즉시 unreadCount를 0으로 설정
-  unreadByRoom.value[room.roomId] = 0
+  const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
+  if (idx !== -1) {
+    rooms.value[idx].unreadCount = 0
+  }
   console.log('🚪 방 입장 - unread 초기화:', room.roomId)
   
   // 무한 스크롤 상태 초기화
