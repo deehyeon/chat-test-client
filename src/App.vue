@@ -503,27 +503,51 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ /user/queue/room-summary 구독 함수 (Vue 3 반응형 최적화)
+// ✅ /user/queue/room-summary 구독 함수 (강화된 디버깅 및 반응형)
 function subscribeRoomSummary() {
   if (!stompClient || !isConnected.value) {
     console.warn('❌ STOMP 클라이언트가 연결되지 않았습니다. 구독 실패')
     return
   }
 
-  console.log('📡 /user/queue/room-summary 구독 시도')
+  console.log('📡📡📡 /user/queue/room-summary 구독 시도 📡📡📡')
+  console.log('현재 memberId:', currentMemberId.value)
+  console.log('현재 rooms 개수:', rooms.value.length)
 
   try {
     roomSummarySubscription = stompClient.subscribe('/user/queue/room-summary', (message) => {
+      console.log('\n🎉🎉🎉 room-summary 메시지 수신! 🎉🎉🎉')
+      console.log('Raw message:', message)
+      console.log('Message body:', message.body)
+      
       const summary = JSON.parse(message.body)
-      console.log('📩 [room-summary 수신]', summary)
+      console.log('📩 Parsed summary:', JSON.stringify(summary, null, 2))
+
+      // 업데이트 전 상태 로그
+      console.log('📋 업데이트 전 rooms:', rooms.value.map(r => ({
+        roomId: r.roomId,
+        unreadCount: r.unreadCount,
+        lastPreview: r.lastMessagePreview
+      })))
 
       // rooms.value 복사
       const updatedRooms = [...rooms.value]
-
       const idx = updatedRooms.findIndex(r => r.roomId === summary.roomId)
       
+      console.log('🔍 찾은 방 인덱스:', idx)
+      
       if (idx !== -1) {
-        // 기존 방 업데이트 (스프레드로 새 객체 생성)
+        // 기존 방 업데이트
+        const oldRoom = updatedRooms[idx]
+        console.log('🔄 기존 방 업데이트:', {
+          roomId: summary.roomId,
+          이전_unread: oldRoom.unreadCount,
+          새로운_unread: summary.unread,
+          이전_preview: oldRoom.lastMessagePreview,
+          새로운_preview: summary.lastMessagePreview,
+          현재보는방: currentRoomId.value
+        })
+        
         updatedRooms[idx] = {
           ...updatedRooms[idx],
           lastMessagePreview: summary.lastMessagePreview,
@@ -535,6 +559,8 @@ function subscribeRoomSummary() {
         // 맨 위로 이동
         const room = updatedRooms.splice(idx, 1)[0]
         updatedRooms.unshift(room)
+        
+        console.log('✅ 방을 맨 위로 이동 완료')
       } else {
         // 새로운 방 추가
         console.log('✨ 새로운 방 추가:', summary.roomId)
@@ -550,12 +576,23 @@ function subscribeRoomSummary() {
 
       // ✅ Vue 반응형 트리거 (참조 변경)
       rooms.value = updatedRooms
-      console.log('✅ 목록 갱신 완료:', updatedRooms)
+      
+      // nextTick으로 UI 업데이트 보장
+      nextTick(() => {
+        console.log('🎨 UI 업데이트 완료')
+        console.log('📋 업데이트 후 rooms:', rooms.value.map(r => ({
+          roomId: r.roomId,
+          unreadCount: r.unreadCount,
+          lastPreview: r.lastMessagePreview
+        })))
+        console.log('🎯 총 방 개수:', rooms.value.length)
+      })
     })
 
-    console.log('✅ /user/queue/room-summary 구독 성공')
+    console.log('✅✅✅ /user/queue/room-summary 구독 성공! ✅✅✅')
+    console.log('구독 객체:', roomSummarySubscription)
   } catch (error) {
-    console.error('❌ /user/queue/room-summary 구독 실패:', error)
+    console.error('❌❌❌ /user/queue/room-summary 구독 실패:', error)
   }
 }
 
