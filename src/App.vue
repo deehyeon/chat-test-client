@@ -917,28 +917,14 @@ const formatTime = (timestamp) => {
   })
 }
 
+// ✅ 시간 표시를 HH:MM 형식으로만 표시 (09:10, 19:00)
 const formatLastMessageTime = (timestamp) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  
-  if (diff < 60000) return '방금'
-  if (diff < 3600000) return Math.floor(diff / 60000) + '분 전'
-  
-  if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-  }
-  
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return '어제'
-  
-  if (date.getFullYear() === now.getFullYear()) {
-    return (date.getMonth() + 1) + '월 ' + date.getDate() + '일'
-  }
-  
-  return date.getFullYear() + '년 ' + (date.getMonth() + 1) + '월 ' + date.getDate() + '일'
+  return date.toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }
 
 const formatFileSize = (bytes) => {
