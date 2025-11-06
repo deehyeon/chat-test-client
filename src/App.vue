@@ -342,8 +342,10 @@ const signupForm = ref({
   phone: ''
 })
 
+// ✅ 전역 변수: STOMP 관련
 let stompClient = null
-let subscription = null
+let subscription = null        // 채팅방 메시지 구독
+let personalSub = null         // ✅ 개인 큐 구독 핸들
 
 const statusText = computed(() => {
   if (isConnected.value) {
@@ -430,17 +432,40 @@ const connectWebSocket = () => {
     
     stompClient.connect(
       connectHeaders,
-      function(frame) {
+      async (frame) => {
         console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
+        console.log('Frame:', frame)
         isConnected.value = true
         
-        // ✅ 개인 큐 구독
-        subscribeRoomSummary()
+        // ✅ 개인 큐 구독: /user/queue/room-summary
+        if (personalSub) {
+          personalSub.unsubscribe()
+          personalSub = null
+        }
+        personalSub = stompClient.subscribe('/user/queue/room-summary', (msg) => {
+          const s = JSON.parse(msg.body)
+          console.log('📬 [room-summary 수신]', s)
+
+          // 서버 DTO 필드명 방어적 매핑
+          const roomId = s.roomId ?? s.id
+          const preview = s.lastMessagePreview ?? s.preview ?? ''
+          const ts = s.lastMessageAt ?? s.ts ?? Date.now()
+          const unread = (typeof s.unreadCount === 'number')
+            ? s.unreadCount
+            : (typeof s.unread === 'number' ? s.unread : undefined)
+
+          // ✅ 목록 갱신
+          if (roomId != null) {
+            updateRoomSummary(roomId, { preview, ts, unread })
+          }
+        })
+
+        console.log('✅ /user/queue/room-summary 구독 완료')
         
-        loadRooms()
+        await loadRooms()
         resolve(frame)
       },
-      function(error) {
+      (error) => {
         console.error('❌ WebSocket 연결 실패:', error)
         isConnected.value = false
         alert('WebSocket 연결 실패')
@@ -448,66 +473,46 @@ const connectWebSocket = () => {
       }
     )
     
-    socket.onclose = function(e) {
+    socket.onclose = (e) => {
       console.log('⚠️ WebSocket 연결 종료')
       isConnected.value = false
     }
   })
 }
 
-// ✅ 개인 큐 구독 - lastMessageAt 포함, 최신순 정렬 추가
-function subscribeRoomSummary() {
-  if (!stompClient) {
-    console.error('❌ STOMP 클라이언트가 없습니다.')
-    return
+// ✅ room-summary 업데이트 함수
+const updateRoomSummary = (roomId, { preview, ts, unread }) => {
+  const idx = rooms.value.findIndex(r => r.roomId === roomId)
+  
+  if (idx !== -1) {
+    // 기존 방이면 업데이트
+    const room = rooms.value[idx]
+    room.lastMessagePreview = preview
+    room.lastMessageAt = ts
+
+    // ✅ 현재 채팅방에 없을 때만 unreadCount 갱신
+    if (currentRoomId.value !== roomId && unread !== undefined) {
+      room.unreadCount = unread
+    }
+  } else {
+    // 새 방이면 추가
+    rooms.value.push({
+      roomId,
+      type: 'PRIVATE',
+      lastMessagePreview: preview,
+      lastMessageAt: ts,
+      unreadCount: unread !== undefined ? unread : 0
+    })
   }
 
-  console.log('📡 /user/queue/room-summary 구독 시도...')
-
-  stompClient.subscribe('/user/queue/room-summary', (frame) => {
-    try {
-      const summary = JSON.parse(frame.body)
-      console.log('📬 [room-summary 수신]', summary)
-
-      const roomId = summary.roomId
-      const preview = summary.lastMessagePreview || summary.preview || ''
-      const unread = summary.unreadCount || summary.unread || 0
-      const lastMessageAt = summary.lastMessageAt || new Date().toISOString()
-      const type = summary.type || 'PRIVATE'
-
-      // rooms 배열 갱신
-      const idx = rooms.value.findIndex(r => r.roomId === roomId)
-      if (idx !== -1) {
-        rooms.value[idx].lastMessagePreview = preview
-        rooms.value[idx].unreadCount = unread
-        rooms.value[idx].lastMessageAt = lastMessageAt
-        rooms.value[idx].type = type
-      } else {
-        // 새 방 추가
-        rooms.value.push({
-          roomId,
-          type,
-          lastMessagePreview: preview,
-          unreadCount: unread,
-          lastMessageAt
-        })
-      }
-
-      // ✅ 최신순 정렬 (lastMessageAt 기준)
-      rooms.value.sort((a, b) => {
-        const timeA = new Date(a.lastMessageAt || 0).getTime()
-        const timeB = new Date(b.lastMessageAt || 0).getTime()
-        return timeB - timeA
-      })
-
-      console.log(`✅ 방 ${roomId} 요약 업데이트: preview="${preview}", unread=${unread}, time=${lastMessageAt}`)
-      console.log('📋 현재 방 목록:', rooms.value.length, '개')
-    } catch (e) {
-      console.error('room-summary 파싱 오류:', e, frame.body)
-    }
+  // ✅ 최신순 정렬 (lastMessageAt 기준)
+  rooms.value.sort((a, b) => {
+    const timeA = new Date(a.lastMessageAt || 0).getTime()
+    const timeB = new Date(b.lastMessageAt || 0).getTime()
+    return timeB - timeA
   })
 
-  console.log('✅ /user/queue/room-summary 구독 완료')
+  console.log(`✅ 방 ${roomId} 요약 업데이트 완료`)
 }
 
 const signup = async () => {
@@ -572,17 +577,26 @@ const signup = async () => {
   }
 }
 
+// ✅ disconnect 시 구독 해제
 const disconnect = () => {
-  if (stompClient) {
+  if (stompClient !== null) {
+    if (subscription) {
+      subscription.unsubscribe()
+      subscription = null
+    }
+    if (personalSub) {          // ✅ 추가
+      personalSub.unsubscribe()
+      personalSub = null
+    }
     stompClient.disconnect()
     stompClient = null
   }
   isConnected.value = false
+  currentMemberId.value = null
+  currentRoomId.value = null
+  accessToken.value = null
   rooms.value = []
   messages.value = []
-  currentRoomId.value = null
-  currentMemberId.value = null
-  accessToken.value = null
   console.log('🔴 WebSocket 연결 종료 및 구독 해제 완료')
 }
 
