@@ -254,7 +254,7 @@
         </div>
         <div class="form-group">
           <label>비밀번호</label>
-          <input v-model="signupForm.password" type="password" placeholder="비밀밀번호">
+          <input v-model="signupForm.password" type="password" placeholder="비밀번호">
         </div>
         <div class="form-group">
           <label>닉네임</label>
@@ -342,10 +342,10 @@ const signupForm = ref({
   phone: ''
 })
 
-// ✅ 전역 변수: STOMP 관련
+// ✅ 전역 변수: STOMP 구독 핸들 분리
 let stompClient = null
-let subscription = null        // 채팅방 메시지 구독
-let personalSub = null         // ✅ 개인 큐 구독 핸들
+let roomSub = null             // ✅ 방 구독 전용 (전환 시마다 해제/재구독)
+let personalSub = null         // ✅ 개인 큐 구독 전용 (앱 라이프사이클 동안 유지)
 
 const statusText = computed(() => {
   if (isConnected.value) {
@@ -437,30 +437,29 @@ const connectWebSocket = () => {
         console.log('Frame:', frame)
         isConnected.value = true
         
-        // ✅ 개인 큐 구독: /user/queue/room-summary
-        if (personalSub) {
-          personalSub.unsubscribe()
-          personalSub = null
+        // ✅ 개인 큐 구독: CONNECT 성공 직후 '한 번만' 구독
+        if (!personalSub) {
+          console.log('📡 /user/queue/room-summary 구독 시도')
+          personalSub = stompClient.subscribe('/user/queue/room-summary', (frame) => {
+            console.log('📥 [room-summary raw]', frame)
+            try {
+              const s = JSON.parse(frame.body)
+              console.log('📥 [room-summary parsed]', s)
+              
+              const roomId = s.roomId ?? s.id
+              const preview = s.lastMessagePreview ?? s.preview ?? ''
+              const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
+              const unread = (typeof s.unreadCount === 'number') ? s.unreadCount
+                           : (typeof s.unread === 'number') ? s.unread : undefined
+              
+              if (roomId == null) return
+              updateRoomSummary(roomId, { preview, ts, unread })
+            } catch (e) {
+              console.error('❌ [room-summary parse error]', e, frame?.body)
+            }
+          })
+          console.log('✅ /user/queue/room-summary 구독 완료')
         }
-        personalSub = stompClient.subscribe('/user/queue/room-summary', (msg) => {
-          const s = JSON.parse(msg.body)
-          console.log('📬 [room-summary 수신]', s)
-
-          // 서버 DTO 필드명 방어적 매핑
-          const roomId = s.roomId ?? s.id
-          const preview = s.lastMessagePreview ?? s.preview ?? ''
-          const ts = s.lastMessageAt ?? s.ts ?? Date.now()
-          const unread = (typeof s.unreadCount === 'number')
-            ? s.unreadCount
-            : (typeof s.unread === 'number' ? s.unread : undefined)
-
-          // ✅ 목록 갱신
-          if (roomId != null) {
-            updateRoomSummary(roomId, { preview, ts, unread })
-          }
-        })
-
-        console.log('✅ /user/queue/room-summary 구독 완료')
         
         await loadRooms()
         resolve(frame)
@@ -480,22 +479,31 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ room-summary 업데이트 함수
+// ✅ room-summary 업데이트 함수 - Vue 반응성 보장
 const updateRoomSummary = (roomId, { preview, ts, unread }) => {
+  console.log('🔄 updateRoomSummary 호출:', { roomId, preview, unread, ts })
+  
   const idx = rooms.value.findIndex(r => r.roomId === roomId)
   
   if (idx !== -1) {
-    // 기존 방이면 업데이트
-    const room = rooms.value[idx]
-    room.lastMessagePreview = preview
-    room.lastMessageAt = ts
-
+    // 기존 방이면 업데이트 - 새 객체 생성으로 Vue 반응성 보장
+    const updatedRoom = {
+      ...rooms.value[idx],
+      lastMessagePreview: preview,
+      lastMessageAt: ts
+    }
+    
     // ✅ 현재 채팅방에 없을 때만 unreadCount 갱신
     if (currentRoomId.value !== roomId && unread !== undefined) {
-      room.unreadCount = unread
+      updatedRoom.unreadCount = unread
+      console.log(`📊 unreadCount 업데이트: ${rooms.value[idx].unreadCount} -> ${unread}`)
     }
+    
+    // splice로 교체하여 Vue 반응성 보장
+    rooms.value.splice(idx, 1, updatedRoom)
   } else {
     // 새 방이면 추가
+    console.log('🆕 새로운 방 추가:', roomId)
     rooms.value.push({
       roomId,
       type: 'PRIVATE',
@@ -505,14 +513,14 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
     })
   }
 
-  // ✅ 최신순 정렬 (lastMessageAt 기준)
-  rooms.value.sort((a, b) => {
+  // ✅ 최신순 정렬 후 새 배열로 재할당하여 Vue 반응성 보장
+  rooms.value = [...rooms.value].sort((a, b) => {
     const timeA = new Date(a.lastMessageAt || 0).getTime()
     const timeB = new Date(b.lastMessageAt || 0).getTime()
     return timeB - timeA
   })
 
-  console.log(`✅ 방 ${roomId} 요약 업데이트 완료`)
+  console.log(`✅ 방 ${roomId} 요약 업데이트 완료 - 현재 방 목록:`, rooms.value.length)
 }
 
 const signup = async () => {
@@ -577,14 +585,14 @@ const signup = async () => {
   }
 }
 
-// ✅ disconnect 시 구독 해제
+// ✅ disconnect 시 둘 다 해제
 const disconnect = () => {
   if (stompClient !== null) {
-    if (subscription) {
-      subscription.unsubscribe()
-      subscription = null
+    if (roomSub) {
+      roomSub.unsubscribe()
+      roomSub = null
     }
-    if (personalSub) {          // ✅ 추가
+    if (personalSub) {
       personalSub.unsubscribe()
       personalSub = null
     }
@@ -681,6 +689,7 @@ const loadRooms = async () => {
   }
 }
 
+// ✅ 방 전환 시에는 roomSub만 관리
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
     alert('WebSocket 연결이 끊어졌습니다.')
@@ -703,15 +712,16 @@ const selectRoom = (room) => {
   hasMoreMessages.value = true
   isFirstLoad.value = true
 
-  if (subscription) {
-    subscription.unsubscribe()
-    subscription = null
+  // ✅ 이전 방 구독 해제 (roomSub만)
+  if (roomSub) {
+    roomSub.unsubscribe()
+    roomSub = null
   }
 
   const subscriptionPath = `/topic/chat/room/${room.roomId}`
   
   try {
-    subscription = stompClient.subscribe(subscriptionPath, (message) => {
+    roomSub = stompClient.subscribe(subscriptionPath, (message) => {
       const chatMessage = JSON.parse(message.body)
       console.log('📩 실시간 메시지:', chatMessage)
       
@@ -900,9 +910,9 @@ const leaveRoom = async () => {
     })
 
     if (response.ok) {
-      if (subscription) {
-        subscription.unsubscribe()
-        subscription = null
+      if (roomSub) {
+        roomSub.unsubscribe()
+        roomSub = null
       }
       
       currentRoomId.value = null
@@ -931,7 +941,6 @@ const formatTime = (timestamp) => {
   })
 }
 
-// ✅ 시간 표시를 HH:MM 형식으로만 표시 (09:10, 19:00)
 const formatLastMessageTime = (timestamp) => {
   if (!timestamp) return ''
   const date = new Date(timestamp)
