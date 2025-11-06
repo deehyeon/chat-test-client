@@ -124,7 +124,7 @@
                     @click="openImageModal(message.fileUrl)"
                     @error="handleImageError"
                   >
-                  <div v-else class="error-message">❌이미지 URL이 없습니다</div>
+                  <div v-else class="error-message">❌ 이미지 URL이 없습니다</div>
                   <div v-if="message.content" class="image-caption">{{ message.content }}</div>
                 </div>
                 
@@ -431,84 +431,78 @@ const connectWebSocket = () => {
     stompClient.heartbeat.outgoing = 10000
     stompClient.heartbeat.incoming = 10000
     
-    // ♻️ onConnect 핸들러 설정 (재연결 시에도 자동 실행)
-    stompClient.onConnect = async (frame) => {
-      console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
-      console.log('Frame:', frame)
-      console.log('🔗 STOMP Client 상태:', {
-        connected: stompClient.connected,
-        counter: stompClient.counter,
-        ws: stompClient.ws?.readyState
-      })
-      isConnected.value = true
-      
-      // ✅ 개인 큐 구독
-      console.log('📡 /user/queue/room-summary 구독 시도...')
-      console.log('📡 현재 personalSub 상태:', personalSub)
-      
-      try {
-        personalSub = stompClient.subscribe('/user/queue/room-summary', (frame) => {
-          console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
-          console.log('📥 [room-summary raw]', frame)
-          console.log('📥 [frame.body]', frame.body)
-          
-          try {
-            const s = JSON.parse(frame.body)
-            console.log('📥 [room-summary parsed]', s)
-            
-            const roomId = s.roomId ?? s.id
-            const preview = s.lastMessagePreview ?? s.preview ?? ''
-            const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
-            let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
-                         : (typeof s.unread === 'number') ? s.unread : undefined
-            
-            if (roomId === currentRoomId.value) {
-              unread = 0
-              console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
-            }
-            
-            console.log('📬 [room-summary 처리]', { 
-              roomId, preview, unread, currentRoomId: currentRoomId.value 
-            })
-            
-            if (roomId != null) {
-              updateRoomSummary(roomId, { preview, ts, unread })
-            }
-          } catch (e) {
-            console.error('❌ [room-summary parse error]', e, frame?.body)
-          }
-        })
-        
-        console.log('✅✅✅ /user/queue/room-summary 구독 완료! ✅✅✅')
-        console.log('✅ personalSub 객체:', personalSub)
-        console.log('✅ personalSub.id:', personalSub?.id)
-        console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
-        
-      } catch (error) {
-        console.error('❌❌❌ /user/queue/room-summary 구독 실패! ❌❌❌', error)
-      }
-      
-      await loadRooms()
-      resolve(frame)
-    }
-    
-    // ♻️ onDisconnect 핸들러 설정
-    stompClient.onDisconnect = (frame) => {
-      console.log('⚠️ WebSocket 연결 끊김', frame)
-      isConnected.value = false
-    }
-    
-    // ♻️ onStompError 핸들러 설정
-    stompClient.onStompError = (frame) => {
-      console.error('❌ STOMP 에러:', frame)
-    }
-    
-    // ♻️ 연결 시작
     const connectHeaders = {
       'Authorization': 'Bearer ' + accessToken.value
     }
     
-    stompClient.connect(connectHeaders)
+    stompClient.connect(
+      connectHeaders,
+      async (frame) => {
+        console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
+        console.log('Frame:', frame)
+        console.log('🔗 STOMP Client 상태:', {
+          connected: stompClient.connected,
+          counter: stompClient.counter,
+          ws: stompClient.ws?.readyState
+        })
+        isConnected.value = true
+        
+        // ✅ 개인 큐 구독
+        console.log('📡 /user/queue/room-summary 구독 시도...')
+        console.log('📡 현재 personalSub 상태:', personalSub)
+        
+        try {
+          personalSub = stompClient.subscribe('/user/queue/room-summary', (frame) => {
+            console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
+            console.log('📥 [room-summary raw]', frame)
+            console.log('📥 [frame.body]', frame.body)
+            
+            try {
+              const s = JSON.parse(frame.body)
+              console.log('📥 [room-summary parsed]', s)
+              
+              const roomId = s.roomId ?? s.id
+              const preview = s.lastMessagePreview ?? s.preview ?? ''
+              const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
+              let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
+                           : (typeof s.unread === 'number') ? s.unread : undefined
+              
+              if (roomId === currentRoomId.value) {
+                unread = 0
+                console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
+              }
+              
+              console.log('📬 [room-summary 처리]', { 
+                roomId, preview, unread, currentRoomId: currentRoomId.value 
+              })
+              
+              if (roomId != null) {
+                updateRoomSummary(roomId, { preview, ts, unread })
+              }
+            } catch (e) {
+              console.error('❌ [room-summary parse error]', e, frame?.body)
+            }
+          })
+          
+          console.log('✅✅✅ /user/queue/room-summary 구독 완료! ✅✅✅')
+          console.log('✅ personalSub 객체:', personalSub)
+          console.log('✅ personalSub.id:', personalSub?.id)
+          console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
+          
+        } catch (error) {
+          console.error('❌❌❌ /user/queue/room-summary 구독 실패! ❌❌❌', error)
+        }
+        
+        await loadRooms()
+        resolve(frame)
+      },
+      (error) => {
+        console.error('❌ WebSocket 연결 실패:', error)
+        isConnected.value = false
+        alert('WebSocket 연결 실패')
+        reject(error)
+      }
+    )
     
     socket.onclose = (e) => {
       console.log('⚠️ WebSocket 연결 종료', e)
