@@ -426,10 +426,10 @@ const connectWebSocket = () => {
     const socket = new SockJS(wsUrl)
     stompClient = webstomp.over(socket)
     
-    // 🔧 A. 디버그 & 하트비트 활성화 (세션 유지)
+    // 🔧 디버그 & 하트비트 활성화
     stompClient.debug = (msg) => console.log('🔍 STOMP DEBUG:', msg)
-    stompClient.heartbeat.outgoing = 10000  // 10초마다 ping
-    stompClient.heartbeat.incoming = 10000  // 10초 inactivity면 서버 ping 기대
+    stompClient.heartbeat.outgoing = 10000
+    stompClient.heartbeat.incoming = 10000
     
     const connectHeaders = {
       'Authorization': 'Bearer ' + accessToken.value
@@ -440,13 +440,23 @@ const connectWebSocket = () => {
       async (frame) => {
         console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
         console.log('Frame:', frame)
+        console.log('🔗 STOMP Client 상태:', {
+          connected: stompClient.connected,
+          counter: stompClient.counter,
+          ws: stompClient.ws?.readyState
+        })
         isConnected.value = true
         
-        // ✅ B. 개인 큐 구독: CONNECT 성공 직후 '한 번만' 구독
-        if (!personalSub) {
-          console.log('📡 /user/queue/room-summary 구독 시도')
+        // ✅ 개인 큐 구독
+        console.log('📡 /user/queue/room-summary 구독 시도...')
+        console.log('📡 현재 personalSub 상태:', personalSub)
+        
+        try {
           personalSub = stompClient.subscribe('/user/queue/room-summary', (frame) => {
+            console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
             console.log('📥 [room-summary raw]', frame)
+            console.log('📥 [frame.body]', frame.body)
+            
             try {
               const s = JSON.parse(frame.body)
               console.log('📥 [room-summary parsed]', s)
@@ -457,7 +467,6 @@ const connectWebSocket = () => {
               let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
                            : (typeof s.unread === 'number') ? s.unread : undefined
               
-              // ✅ 현재 열어둔 방이면 뱃지 0으로 고정
               if (roomId === currentRoomId.value) {
                 unread = 0
                 console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
@@ -474,7 +483,14 @@ const connectWebSocket = () => {
               console.error('❌ [room-summary parse error]', e, frame?.body)
             }
           })
-          console.log('✅ /user/queue/room-summary 구독 완료')
+          
+          console.log('✅✅✅ /user/queue/room-summary 구독 완료! ✅✅✅')
+          console.log('✅ personalSub 객체:', personalSub)
+          console.log('✅ personalSub.id:', personalSub?.id)
+          console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
+          
+        } catch (error) {
+          console.error('❌❌❌ /user/queue/room-summary 구독 실패! ❌❌❌', error)
         }
         
         await loadRooms()
@@ -489,20 +505,18 @@ const connectWebSocket = () => {
     )
     
     socket.onclose = (e) => {
-      console.log('⚠️ WebSocket 연결 종료')
+      console.log('⚠️ WebSocket 연결 종료', e)
       isConnected.value = false
     }
   })
 }
 
-// ✅ E. room-summary 업데이트 함수 - 현재 방은 항상 unread=0 유지
 const updateRoomSummary = (roomId, { preview, ts, unread }) => {
   console.log('🔄 updateRoomSummary 호출:', { roomId, preview, unread, ts })
   
   const idx = rooms.value.findIndex(r => r.roomId === roomId)
   
   if (idx !== -1) {
-    // 기존 방이면 업데이트
     const base = rooms.value[idx]
     const updated = {
       ...base,
@@ -510,7 +524,6 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
       lastMessageAt: ts ?? base.lastMessageAt
     }
     
-    // ✅ 현재 방이면 항상 0 유지
     if (roomId === currentRoomId.value) {
       updated.unreadCount = 0
       console.log('📭 현재 방 - unread 0 유지:', roomId)
@@ -519,10 +532,8 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
       console.log(`📊 다른 방 - unreadCount 업데이트: ${base.unreadCount} -> ${unread}`)
     }
     
-    // splice로 교체하여 Vue 반응성 보장
     rooms.value.splice(idx, 1, updated)
   } else {
-    // 새 방이면 추가
     console.log('🆕 새로운 방 추가:', roomId)
     rooms.value.push({
       roomId,
@@ -533,7 +544,6 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
     })
   }
 
-  // ✅ 최신순 정렬 후 새 배열로 재할당하여 Vue 반응성 보장
   rooms.value = [...rooms.value].sort((a, b) => {
     const timeA = new Date(a.lastMessageAt || 0).getTime()
     const timeB = new Date(b.lastMessageAt || 0).getTime()
@@ -543,7 +553,6 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
   console.log(`✅ 방 ${roomId} 요약 업데이트 완료 - 현재 방 목록:`, rooms.value.length)
 }
 
-// ✅ C. 서버에 읽음 반영하는 함수
 const markAsRead = async (roomId) => {
   if (!accessToken.value) return
   
@@ -621,14 +630,19 @@ const signup = async () => {
   }
 }
 
-// ✅ F. disconnect 시 둘 다 해제 (personalSub는 여기서만)
 const disconnect = () => {
+  console.log('🔴 연결 종료 시작...')
+  console.log('🔴 personalSub 상태:', personalSub)
+  console.log('🔴 roomSub 상태:', roomSub)
+  
   if (stompClient !== null) {
     if (roomSub) {
+      console.log('🔴 roomSub 구독 해제')
       roomSub.unsubscribe()
       roomSub = null
     }
     if (personalSub) {
+      console.log('🔴 personalSub 구독 해제')
       personalSub.unsubscribe()
       personalSub = null
     }
@@ -702,7 +716,6 @@ const loadRooms = async () => {
       const responseData = await response.json()
       const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
       
-      // ✅ 서버 DTO 필드명 매핑 + lastMessageAt 포함
       rooms.value = roomList.map(r => ({
         roomId: r.roomId,
         type: r.type,
@@ -711,7 +724,6 @@ const loadRooms = async () => {
         lastMessageAt: r.lastMessageAt
       }))
       
-      // ✅ 최신순 정렬
       rooms.value.sort((a, b) => {
         const timeA = new Date(a.lastMessageAt || 0).getTime()
         const timeB = new Date(b.lastMessageAt || 0).getTime()
@@ -725,7 +737,6 @@ const loadRooms = async () => {
   }
 }
 
-// ✅ 방 전환 시에는 roomSub만 관리 (personalSub는 건드리지 않음)
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
     alert('WebSocket 연결이 끊어졌습니다.')
@@ -733,14 +744,13 @@ const selectRoom = (room) => {
   }
 
   console.log('🚪 방 입장:', room.roomId)
+  console.log('🚪 personalSub 상태 (방 입장 시):', personalSub)
 
   currentRoomId.value = room.roomId
   currentRoomName.value = `채팅방 ${room.roomId}`
   
-  // ✅ C. 방 입장 즉시 서버에 읽음 반영
   markAsRead(room.roomId).catch(e => console.error('읽음 반영 실패:', e))
   
-  // ✅ D. 방 입장 시 해당 방의 unreadCount를 splice로 0 설정 (반응성 보장)
   const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
   if (idx !== -1) {
     const updated = { ...rooms.value[idx], unreadCount: 0 }
@@ -753,7 +763,6 @@ const selectRoom = (room) => {
   hasMoreMessages.value = true
   isFirstLoad.value = true
 
-  // ✅ 이전 방 구독 해제 (roomSub만)
   if (roomSub) {
     roomSub.unsubscribe()
     roomSub = null
