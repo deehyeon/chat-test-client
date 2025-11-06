@@ -449,8 +449,16 @@ const connectWebSocket = () => {
               const roomId = s.roomId ?? s.id
               const preview = s.lastMessagePreview ?? s.preview ?? ''
               const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
-              const unread = (typeof s.unreadCount === 'number') ? s.unreadCount
+              let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
                            : (typeof s.unread === 'number') ? s.unread : undefined
+              
+              // ✅ A. 현재 열어둔 방이면 뱃지 0으로 고정
+              if (roomId === currentRoomId.value) {
+                unread = 0
+                console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
+              }
+              
+              console.log('📬 [room-summary 처리]', { roomId, preview, unread, currentRoomId: currentRoomId.value })
               
               if (roomId == null) return
               updateRoomSummary(roomId, { preview, ts, unread })
@@ -479,7 +487,7 @@ const connectWebSocket = () => {
   })
 }
 
-// ✅ room-summary 업데이트 함수 - Vue 반응성 보장
+// ✅ B. room-summary 업데이트 함수 - 현재 방은 항상 unread=0 유지
 const updateRoomSummary = (roomId, { preview, ts, unread }) => {
   console.log('🔄 updateRoomSummary 호출:', { roomId, preview, unread, ts })
   
@@ -487,20 +495,22 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
   
   if (idx !== -1) {
     // 기존 방이면 업데이트 - 새 객체 생성으로 Vue 반응성 보장
-    const updatedRoom = {
-      ...rooms.value[idx],
-      lastMessagePreview: preview,
-      lastMessageAt: ts
-    }
+    const target = { ...rooms.value[idx] }
     
-    // ✅ 현재 채팅방에 없을 때만 unreadCount 갱신
-    if (currentRoomId.value !== roomId && unread !== undefined) {
-      updatedRoom.unreadCount = unread
-      console.log(`📊 unreadCount 업데이트: ${rooms.value[idx].unreadCount} -> ${unread}`)
+    if (preview !== undefined) target.lastMessagePreview = preview
+    if (ts !== undefined) target.lastMessageAt = ts
+    
+    // ✅ B. 현재 열어둔 방이면 무조건 0, 아니면 서버 값 적용
+    if (roomId === currentRoomId.value) {
+      target.unreadCount = 0
+      console.log('📭 현재 방 - unread 0 유지:', roomId)
+    } else if (unread !== undefined) {
+      target.unreadCount = unread
+      console.log(`📊 다른 방 - unreadCount 업데이트: ${rooms.value[idx].unreadCount} -> ${unread}`)
     }
     
     // splice로 교체하여 Vue 반응성 보장
-    rooms.value.splice(idx, 1, updatedRoom)
+    rooms.value.splice(idx, 1, target)
   } else {
     // 새 방이면 추가
     console.log('🆕 새로운 방 추가:', roomId)
