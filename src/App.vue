@@ -447,44 +447,52 @@ const connectWebSocket = () => {
         })
         isConnected.value = true
         
-        // ✅ 개인 큐 구독
-        console.log('📡 /user/queue/room-summary 구독 시도...')
+        // ✅ 개인 큐 구독 - 헤더 포함
+        console.log('📡 /user/queue/room-summary 구독 시도 (헤더 포함)...')
         console.log('📡 현재 personalSub 상태:', personalSub)
         
         try {
-          personalSub = stompClient.subscribe('/user/queue/room-summary', (frame) => {
-            console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
-            console.log('📥 [room-summary raw]', frame)
-            console.log('📥 [frame.body]', frame.body)
-            
-            try {
-              const s = JSON.parse(frame.body)
-              console.log('📥 [room-summary parsed]', s)
-              
-              const roomId = s.roomId ?? s.id
-              const preview = s.lastMessagePreview ?? s.preview ?? ''
-              const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
-              let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
-                           : (typeof s.unread === 'number') ? s.unread : undefined
-              
-              if (roomId === currentRoomId.value) {
-                unread = 0
-                console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
-              }
-              
-              console.log('📬 [room-summary 처리]', { 
-                roomId, preview, unread, currentRoomId: currentRoomId.value 
-              })
-              
-              if (roomId != null) {
-                updateRoomSummary(roomId, { preview, ts, unread })
-              }
-            } catch (e) {
-              console.error('❌ [room-summary parse error]', e, frame?.body)
-            }
-          })
+          const subscribeHeaders = {
+            'Authorization': 'Bearer ' + accessToken.value
+          }
           
-          console.log('✅✅✅ /user/queue/room-summary 구독 완료! ✅✅✅')
+          personalSub = stompClient.subscribe(
+            '/user/queue/room-summary',
+            (frame) => {
+              console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
+              console.log('📥 [room-summary raw]', frame)
+              console.log('📥 [frame.body]', frame.body)
+              
+              try {
+                const s = JSON.parse(frame.body)
+                console.log('📥 [room-summary parsed]', s)
+                
+                const roomId = s.roomId ?? s.id
+                const preview = s.lastMessagePreview ?? s.preview ?? ''
+                const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
+                let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
+                             : (typeof s.unread === 'number') ? s.unread : undefined
+                
+                if (roomId === currentRoomId.value) {
+                  unread = 0
+                  console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
+                }
+                
+                console.log('📬 [room-summary 처리]', { 
+                  roomId, preview, unread, currentRoomId: currentRoomId.value 
+                })
+                
+                if (roomId != null) {
+                  updateRoomSummary(roomId, { preview, ts, unread })
+                }
+              } catch (e) {
+                console.error('❌ [room-summary parse error]', e, frame?.body)
+              }
+            },
+            subscribeHeaders  // ✅ 헤더 추가
+          )
+          
+          console.log('✅✅✅ /user/queue/room-summary 구독 완료! (헤더 포함) ✅✅✅')
           console.log('✅ personalSub 객체:', personalSub)
           console.log('✅ personalSub.id:', personalSub?.id)
           console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
@@ -771,15 +779,26 @@ const selectRoom = (room) => {
   const subscriptionPath = `/topic/chat/room/${room.roomId}`
   
   try {
-    roomSub = stompClient.subscribe(subscriptionPath, (message) => {
-      const chatMessage = JSON.parse(message.body)
-      console.log('📩 실시간 메시지:', chatMessage)
-      
-      messages.value.push(chatMessage)
-      nextTick(() => {
-        scrollToBottom()
-      })
-    })
+    // ✅ 방 구독 시 헤더 추가
+    const subscribeHeaders = {
+      'Authorization': 'Bearer ' + accessToken.value
+    }
+    
+    roomSub = stompClient.subscribe(
+      subscriptionPath,
+      (message) => {
+        const chatMessage = JSON.parse(message.body)
+        console.log('📩 실시간 메시지:', chatMessage)
+        
+        messages.value.push(chatMessage)
+        nextTick(() => {
+          scrollToBottom()
+        })
+      },
+      subscribeHeaders  // ✅ 헤더 추가
+    )
+    
+    console.log(`✅ 방 ${room.roomId} 구독 완료 (헤더 포함)`)
   } catch (error) {
     console.error('❌ 방 구독 실패:', error)
     alert('채팅방 구독에 실패했습니다.')
