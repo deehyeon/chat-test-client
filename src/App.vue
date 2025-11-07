@@ -447,8 +447,9 @@ const connectWebSocket = () => {
         })
         isConnected.value = true
         
-        // ✅ 개인 큐 구독 - 헤더 포함
-        console.log('📡 /user/queue/room-summary 구독 시도 (헤더 포함)...')
+        // ✅ 개인 토픽 구독 - /topic/user.{memberId}.room-summary
+        const personalTopic = `/topic/user.${currentMemberId.value}.room-summary`
+        console.log('📡 개인 토픽 구독 시도:', personalTopic)
         console.log('📡 현재 personalSub 상태:', personalSub)
         
         try {
@@ -457,7 +458,7 @@ const connectWebSocket = () => {
           }
           
           personalSub = stompClient.subscribe(
-            '/user/queue/room-summary',
+            personalTopic,
             (frame) => {
               console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
               console.log('📥 [room-summary raw]', frame)
@@ -489,16 +490,17 @@ const connectWebSocket = () => {
                 console.error('❌ [room-summary parse error]', e, frame?.body)
               }
             },
-            subscribeHeaders  // ✅ 헤더 추가
+            subscribeHeaders
           )
           
-          console.log('✅✅✅ /user/queue/room-summary 구독 완료! (헤더 포함) ✅✅✅')
+          console.log('✅✅✅ 개인 토픽 구독 완료! ✅✅✅')
+          console.log('✅ Topic:', personalTopic)
           console.log('✅ personalSub 객체:', personalSub)
           console.log('✅ personalSub.id:', personalSub?.id)
           console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
           
         } catch (error) {
-          console.error('❌❌❌ /user/queue/room-summary 구독 실패! ❌❌❌', error)
+          console.error('❌❌❌ 개인 토픽 구독 실패! ❌❌❌', error)
         }
         
         await loadRooms()
@@ -795,7 +797,7 @@ const selectRoom = (room) => {
           scrollToBottom()
         })
       },
-      subscribeHeaders  // ✅ 헤더 추가
+      subscribeHeaders
     )
     
     console.log(`✅ 방 ${room.roomId} 구독 완료 (헤더 포함)`)
