@@ -345,7 +345,7 @@ const signupForm = ref({
 // ✅ 전역 변수: STOMP 구독 핸들 분리
 let stompClient = null
 let roomSub = null             // ✅ 방 구독 전용 (전환 시마다 해제/재구독)
-let personalSub = null         // ✅ 개인 큐 구독 전용 (앱 라이프사이클 동안 유지)
+let personalSub = null         // ✅ 개인 토픽 구독 전용 (앱 라이프사이클 동안 유지)
 
 const statusText = computed(() => {
   if (isConnected.value) {
@@ -447,7 +447,7 @@ const connectWebSocket = () => {
         })
         isConnected.value = true
         
-        // ✅ 개인 토픽 구독 - /topic/user.{memberId}.room-summary
+        // ✅ 개인 토픽 구독 - 서버와 일치: /topic/user.{memberId}.room-summary
         const personalTopic = `/topic/user.${currentMemberId.value}.room-summary`
         console.log('📡 개인 토픽 구독 시도:', personalTopic)
         console.log('📡 현재 personalSub 상태:', personalSub)
