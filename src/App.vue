@@ -716,36 +716,51 @@ const loadRooms = async () => {
   if (!accessToken.value) return
 
   try {
-    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/me?page=0&size=20`, {
+    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/me`, {
       headers: {
         'Authorization': 'Bearer ' + accessToken.value
       }
     })
 
-    if (response.ok) {
-      const responseData = await response.json()
-      const roomList = responseData.data?.content || responseData.result?.content || responseData.content || []
-      
-      rooms.value = roomList.map(r => ({
-        roomId: r.roomId,
-        type: r.type,
-        lastMessagePreview: r.lastMessagePreview ?? r.preview ?? '',
-        unreadCount: r.unreadCount ?? r.unread ?? 0,
-        lastMessageAt: r.lastMessageAt
-      }))
-      
-      rooms.value.sort((a, b) => {
-        const timeA = new Date(a.lastMessageAt || 0).getTime()
-        const timeB = new Date(b.lastMessageAt || 0).getTime()
-        return timeB - timeA
-      })
-      
-      console.log(`📋 방 목록 로드: ${rooms.value.length}개`)
+    if (!response.ok) {
+      console.error('방 목록 조회 실패:', response.status)
+      return
     }
+
+    const responseData = await response.json()
+
+    // ✅ 응답이 그냥 List<ChatRoomSummary>인 경우를 기본으로 처리
+    // 혹시 공통 ApiResponse 래핑이 있다면 대비해서 data/result도 한 번 더 체크
+    let roomList = []
+    if (Array.isArray(responseData)) {
+      roomList = responseData
+    } else if (Array.isArray(responseData.data)) {
+      roomList = responseData.data
+    } else if (Array.isArray(responseData.result)) {
+      roomList = responseData.result
+    }
+
+    rooms.value = roomList.map(r => ({
+      roomId: r.roomId,
+      type: r.type,
+      lastMessagePreview: r.lastMessagePreview ?? r.preview ?? '',
+      unreadCount: r.unreadCount ?? r.unread ?? 0,
+      lastMessageAt: r.lastMessageAt
+    }))
+
+    // 최근 대화가 위로 오도록 정렬 (원하면 유지)
+    rooms.value.sort((a, b) => {
+      const timeA = new Date(a.lastMessageAt || 0).getTime()
+      const timeB = new Date(b.lastMessageAt || 0).getTime()
+      return timeB - timeA
+    })
+
+    console.log(`📋 방 목록 로드: ${rooms.value.length}개`)
   } catch (error) {
     console.error('Error:', error)
   }
 }
+
 
 const selectRoom = (room) => {
   if (!stompClient || !isConnected.value) {
