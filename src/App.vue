@@ -91,7 +91,7 @@
         <template v-else>
           <div class="chat-header">
             <h3>{{ currentRoomName }}</h3>
-            <button @click="leaveRoom" class="btn-danger">나가기</button>
+            <button @click="leaveRoom" class="btn-danger" title="채팅방 나가기 (읽음 처리됨)">나가기</button>
           </div>
           <div class="messages" ref="messagesContainer" @scroll="handleScroll">
             <div v-if="isLoadingMore" class="loading-indicator">
@@ -286,11 +286,10 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onUnmounted } from 'vue'
+import { ref, computed, nextTick, onUnmounted, onBeforeUnmount } from 'vue'
 import SockJS from 'sockjs-client'
 import webstomp from 'webstomp-client'
 
-// MessageType enum
 const MessageType = {
   TEXT: 'TEXT',
   IMAGE: 'IMAGE',
@@ -310,6 +309,7 @@ const accessToken = ref(null)
 const otherMemberId = ref('')
 const rooms = ref([])
 const currentRoomId = ref(null)
+const previousRoomId = ref(null)
 const currentRoomName = ref('')
 const messages = ref([])
 const messageInput = ref('')
@@ -319,13 +319,11 @@ const showImageModal = ref(false)
 const currentImage = ref('')
 const uploadProgress = ref(0)
 
-// 무한 스크롤 관련 상태
 const isLoadingMore = ref(false)
 const hasMoreMessages = ref(true)
 const nextBeforeSeq = ref(null)
 const isFirstLoad = ref(true)
 
-// 파일 입력 refs
 const imageInput = ref(null)
 const fileInput = ref(null)
 const videoInput = ref(null)
@@ -342,10 +340,9 @@ const signupForm = ref({
   phone: ''
 })
 
-// ✅ 전역 변수: STOMP 구독 핸들 분리
 let stompClient = null
-let roomSub = null             // ✅ 방 구독 전용 (전환 시마다 해제/재구독)
-let personalSub = null         // ✅ 개인 토픽 구독 전용 (앱 라이프사이클 동안 유지)
+let roomSub = null
+let personalSub = null
 
 const statusText = computed(() => {
   if (isConnected.value) {
@@ -362,12 +359,6 @@ const handleImageError = (e) => {
   console.error('❌ 이미지 로드 실패:', e.target.src)
 }
 
-const isNearBottom = () => {
-  if (!messagesContainer.value) return false
-  const { scrollTop, scrollHeight, clientHeight } = messagesContainer.value
-  return scrollHeight - scrollTop - clientHeight < 150
-}
-
 const login = async () => {
   if (!email.value || !password.value) {
     alert('이메일과 비밀번호를 입력해주세요.')
@@ -375,17 +366,10 @@ const login = async () => {
   }
 
   try {
-    console.log('========== 로그인 시작 ==========')
-
     const response = await fetch(`${serverUrl.value}/v1/auth/login`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email: email.value,
-        password: password.value
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.value, password: password.value })
     })
 
     if (!response.ok) {
@@ -404,8 +388,6 @@ const login = async () => {
     
     accessToken.value = data.tokenInfo.accessToken
     currentMemberId.value = data.memberInfo.memberId
-
-    console.log('✅ 로그인 성공')
     
     await connectWebSocket()
   } catch (error) {
@@ -417,113 +399,64 @@ const login = async () => {
 const connectWebSocket = () => {
   return new Promise((resolve, reject) => {
     if (!accessToken.value) {
-      alert('토큰이 없어서 WebSocket 연결을 할 수 없습니다.')
       reject(new Error('No access token'))
       return
     }
 
-    const wsUrl = serverUrl.value + wsEndpoint.value
-    const socket = new SockJS(wsUrl)
+    const socket = new SockJS(serverUrl.value + wsEndpoint.value)
     stompClient = webstomp.over(socket)
     
-    // 🔧 디버그 & 하트비트 활성화
-    stompClient.debug = (msg) => console.log('🔍 STOMP DEBUG:', msg)
     stompClient.heartbeat.outgoing = 10000
     stompClient.heartbeat.incoming = 10000
     
-    const connectHeaders = {
-      'Authorization': 'Bearer ' + accessToken.value
-    }
-    
     stompClient.connect(
-      connectHeaders,
+      { 'Authorization': 'Bearer ' + accessToken.value },
       async (frame) => {
-        console.log('✅✅✅ WebSocket CONNECT 성공! ✅✅✅')
-        console.log('Frame:', frame)
-        console.log('🔗 STOMP Client 상태:', {
-          connected: stompClient.connected,
-          counter: stompClient.counter,
-          ws: stompClient.ws?.readyState
-        })
         isConnected.value = true
         
-        // ✅ 개인 토픽 구독 - 서버와 일치: /topic/user.{memberId}.room-summary
         const personalTopic = `/topic/user.${currentMemberId.value}.room-summary`
-        console.log('📡 개인 토픽 구독 시도:', personalTopic)
-        console.log('📡 현재 personalSub 상태:', personalSub)
         
         try {
-          const subscribeHeaders = {
-            'Authorization': 'Bearer ' + accessToken.value
-          }
-          
           personalSub = stompClient.subscribe(
             personalTopic,
             (frame) => {
-              console.log('📥📥📥 [room-summary 수신!!!] 📥📥📥')
-              console.log('📥 [room-summary raw]', frame)
-              console.log('📥 [frame.body]', frame.body)
-              
               try {
                 const s = JSON.parse(frame.body)
-                console.log('📥 [room-summary parsed]', s)
-                
                 const roomId = s.roomId ?? s.id
                 const preview = s.lastMessagePreview ?? s.preview ?? ''
                 const ts = s.lastMessageAt ?? s.ts ?? s.createdAt ?? Date.now()
-                let unread = (typeof s.unreadCount === 'number') ? s.unreadCount
-                             : (typeof s.unread === 'number') ? s.unread : undefined
+                let unread = (typeof s.unreadCount === 'number') ? s.unreadCount : (typeof s.unread === 'number') ? s.unread : undefined
                 
                 if (roomId === currentRoomId.value) {
                   unread = 0
-                  console.log('📭 현재 방 메시지 - unread 강제 0:', roomId)
                 }
-                
-                console.log('📬 [room-summary 처리]', { 
-                  roomId, preview, unread, currentRoomId: currentRoomId.value 
-                })
                 
                 if (roomId != null) {
                   updateRoomSummary(roomId, { preview, ts, unread })
                 }
               } catch (e) {
-                console.error('❌ [room-summary parse error]', e, frame?.body)
+                console.error('❌ room-summary parse error', e)
               }
             },
-            subscribeHeaders
+            { 'Authorization': 'Bearer ' + accessToken.value }
           )
-          
-          console.log('✅✅✅ 개인 토픽 구독 완료! ✅✅✅')
-          console.log('✅ Topic:', personalTopic)
-          console.log('✅ personalSub 객체:', personalSub)
-          console.log('✅ personalSub.id:', personalSub?.id)
-          console.log('✅ personalSub.unsubscribe:', typeof personalSub?.unsubscribe)
-          
         } catch (error) {
-          console.error('❌❌❌ 개인 토픽 구독 실패! ❌❌❌', error)
+          console.error('❌ 개인 토픽 구독 실패', error)
         }
         
         await loadRooms()
         resolve(frame)
       },
       (error) => {
-        console.error('❌ WebSocket 연결 실패:', error)
         isConnected.value = false
         alert('WebSocket 연결 실패')
         reject(error)
       }
     )
-    
-    socket.onclose = (e) => {
-      console.log('⚠️ WebSocket 연결 종료', e)
-      isConnected.value = false
-    }
   })
 }
 
 const updateRoomSummary = (roomId, { preview, ts, unread }) => {
-  console.log('🔄 updateRoomSummary 호출:', { roomId, preview, unread, ts })
-  
   const idx = rooms.value.findIndex(r => r.roomId === roomId)
   
   if (idx !== -1) {
@@ -536,15 +469,12 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
     
     if (roomId === currentRoomId.value) {
       updated.unreadCount = 0
-      console.log('📭 현재 방 - unread 0 유지:', roomId)
     } else if (unread !== undefined) {
       updated.unreadCount = unread
-      console.log(`📊 다른 방 - unreadCount 업데이트: ${base.unreadCount} -> ${unread}`)
     }
     
     rooms.value.splice(idx, 1, updated)
   } else {
-    console.log('🆕 새로운 방 추가:', roomId)
     rooms.value.push({
       roomId,
       type: 'PRIVATE',
@@ -559,156 +489,138 @@ const updateRoomSummary = (roomId, { preview, ts, unread }) => {
     const timeB = new Date(b.lastMessageAt || 0).getTime()
     return timeB - timeA
   })
-
-  console.log(`✅ 방 ${roomId} 요약 업데이트 완료 - 현재 방 목록:`, rooms.value.length)
 }
 
 const markAsRead = async (roomId) => {
-  if (!accessToken.value) return
+  if (!accessToken.value || !roomId) return
   
   try {
-    console.log('📖 서버에 읽음 반영:', roomId)
-    await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
+    console.log('✅ 읽음 처리 API 호출:', roomId)
+    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${roomId}/read`, {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + accessToken.value }
+      headers: { 
+        'Authorization': 'Bearer ' + accessToken.value,
+        'Content-Type': 'application/json'
+      }
     })
-    console.log('✅ 읽음 반영 완료:', roomId)
-  } catch (e) {
-    console.error('❌ 읽음 반영 실패:', e)
-  }
-}
-
-const signup = async () => {
-  const form = signupForm.value
-
-  if (!form.name || !form.email || !form.password || !form.nickname || !form.phone) {
-    alert('모든 필드를 입력해주세요.')
-    return
-  }
-
-  if (form.type === 'company' && !form.companyId) {
-    alert('기업 ID를 입력해주세요.')
-    return
-  }
-
-  const requestBody = {
-    name: form.name,
-    email: form.email,
-    password: form.password,
-    nickname: form.nickname,
-    phone: form.phone
-  }
-
-  try {
-    let url = `${serverUrl.value}/v1/auth/signup/${form.type}`
-    if (form.type === 'company') {
-      url += `/${form.companyId}`
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody)
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      alert('회원가입 실패: ' + (errorData.message || '오류가 발생했습니다.'))
-      return
-    }
-
-    const responseData = await response.json()
-    const data = responseData.data
     
-    if (!data || !data.tokenInfo || !data.memberInfo) {
-      alert('회원가입 응답 형식이 올바르지 않습니다.')
-      return
+    if (response.ok) {
+      console.log('✅ 읽음 처리 완료:', roomId)
+    } else {
+      console.error('❌ 읽음 처리 실패:', response.status)
     }
-
-    accessToken.value = data.tokenInfo.accessToken
-    currentMemberId.value = data.memberInfo.memberId
-    email.value = form.email
-
-    alert('회원가입 성공! 자동으로 로그인됩니다.')
-    showSignupModal.value = false
-    await connectWebSocket()
-  } catch (error) {
-    console.error('회원가입 오류:', error)
-    alert('회원가입 중 오류: ' + error.message)
+  } catch (e) {
+    console.error('❌ 읽음 처리 API 호출 실패:', e)
   }
 }
 
-const disconnect = () => {
-  console.log('🔴 연결 종료 시작...')
-  console.log('🔴 personalSub 상태:', personalSub)
-  console.log('🔴 roomSub 상태:', roomSub)
+const disconnect = async () => {
+  if (currentRoomId.value) {
+    await markAsRead(currentRoomId.value)
+  }
   
   if (stompClient !== null) {
     if (roomSub) {
-      console.log('🔴 roomSub 구독 해제')
       roomSub.unsubscribe()
       roomSub = null
     }
     if (personalSub) {
-      console.log('🔴 personalSub 구독 해제')
       personalSub.unsubscribe()
       personalSub = null
     }
     stompClient.disconnect()
     stompClient = null
   }
+  
   isConnected.value = false
   currentMemberId.value = null
   currentRoomId.value = null
+  previousRoomId.value = null
   accessToken.value = null
   rooms.value = []
   messages.value = []
-  console.log('🔴 WebSocket 연결 종료 및 구독 해제 완료')
 }
 
-const createPrivateRoom = async () => {
-  if (!otherMemberId.value) {
-    alert('상대방 ID를 입력해주세요.')
+const selectRoom = async (room) => {
+  if (!stompClient || !isConnected.value) {
+    alert('WebSocket 연결이 끊어졌습니다.')
     return
   }
 
-  if (!accessToken.value) {
-    alert('먼저 로그인해주세요.')
+  if (previousRoomId.value && previousRoomId.value !== room.roomId) {
+    console.log('🚪 이전 채팅방 나가기 - 읽음 처리:', previousRoomId.value)
+    await markAsRead(previousRoomId.value)
+  }
+
+  previousRoomId.value = currentRoomId.value
+  currentRoomId.value = room.roomId
+  currentRoomName.value = `채팅방 ${room.roomId}`
+  
+  const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
+  if (idx !== -1) {
+    const updated = { ...rooms.value[idx], unreadCount: 0 }
+    rooms.value.splice(idx, 1, updated)
+  }
+  
+  messages.value = []
+  nextBeforeSeq.value = null
+  hasMoreMessages.value = true
+  isFirstLoad.value = true
+
+  if (roomSub) {
+    roomSub.unsubscribe()
+    roomSub = null
+  }
+
+  const subscriptionPath = `/topic/chat/room/${room.roomId}`
+  
+  try {
+    roomSub = stompClient.subscribe(
+      subscriptionPath,
+      (message) => {
+        const chatMessage = JSON.parse(message.body)
+        messages.value.push(chatMessage)
+        nextTick(() => {
+          scrollToBottom()
+        })
+      },
+      { 'Authorization': 'Bearer ' + accessToken.value }
+    )
+  } catch (error) {
+    console.error('❌ 방 구독 실패:', error)
     return
   }
+  
+  loadMessages(room.roomId)
+}
+
+const leaveRoom = async () => {
+  if (!currentRoomId.value || !accessToken.value) return
+  if (!confirm('정말 이 채팅방을 나가시겠습니까?')) return
 
   try {
-    const response = await fetch(`${serverUrl.value}/v1/chat/private?otherMemberId=${otherMemberId.value}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + accessToken.value
-      }
+    await markAsRead(currentRoomId.value)
+    
+    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${currentRoomId.value}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': 'Bearer ' + accessToken.value }
     })
 
-    if (!response.ok) {
-      const errorData = await response.json()
-      alert('채팅방 생성 실패: ' + (errorData.message || '오류 발생'))
-      return
-    }
-
-    const data = await response.json()
-    const roomId = data.data || data.result || data
-    
-    await loadRooms()
-    
-    setTimeout(() => {
-      const newRoom = rooms.value.find(r => r.roomId === roomId)
-      if (newRoom) {
-        selectRoom(newRoom)
+    if (response.ok) {
+      if (roomSub) {
+        roomSub.unsubscribe()
+        roomSub = null
       }
-    }, 150)
-    
+      
+      previousRoomId.value = null
+      currentRoomId.value = null
+      currentRoomName.value = ''
+      messages.value = []
+      loadRooms()
+      alert('채팅방을 나갔습니다.')
+    }
   } catch (error) {
     console.error('Error:', error)
-    alert('채팅방 생성 중 오류가 발생했습니다.')
   }
 }
 
@@ -717,21 +629,14 @@ const loadRooms = async () => {
 
   try {
     const response = await fetch(`${serverUrl.value}/v1/chat/rooms/me`, {
-      headers: {
-        'Authorization': 'Bearer ' + accessToken.value
-      }
+      headers: { 'Authorization': 'Bearer ' + accessToken.value }
     })
 
-    if (!response.ok) {
-      console.error('방 목록 조회 실패:', response.status)
-      return
-    }
+    if (!response.ok) return
 
     const responseData = await response.json()
-
-    // ✅ 응답이 그냥 List<ChatRoomSummary>인 경우를 기본으로 처리
-    // 혹시 공통 ApiResponse 래핑이 있다면 대비해서 data/result도 한 번 더 체크
     let roomList = []
+    
     if (Array.isArray(responseData)) {
       roomList = responseData
     } else if (Array.isArray(responseData.data)) {
@@ -748,81 +653,14 @@ const loadRooms = async () => {
       lastMessageAt: r.lastMessageAt
     }))
 
-    // 최근 대화가 위로 오도록 정렬 (원하면 유지)
     rooms.value.sort((a, b) => {
       const timeA = new Date(a.lastMessageAt || 0).getTime()
       const timeB = new Date(b.lastMessageAt || 0).getTime()
       return timeB - timeA
     })
-
-    console.log(`📋 방 목록 로드: ${rooms.value.length}개`)
   } catch (error) {
     console.error('Error:', error)
   }
-}
-
-
-const selectRoom = (room) => {
-  if (!stompClient || !isConnected.value) {
-    alert('WebSocket 연결이 끊어졌습니다.')
-    return
-  }
-
-  console.log('🚪 방 입장:', room.roomId)
-  console.log('🚪 personalSub 상태 (방 입장 시):', personalSub)
-
-  currentRoomId.value = room.roomId
-  currentRoomName.value = `채팅방 ${room.roomId}`
-  
-  markAsRead(room.roomId).catch(e => console.error('읽음 반영 실패:', e))
-  
-  const idx = rooms.value.findIndex(r => r.roomId === room.roomId)
-  if (idx !== -1) {
-    const updated = { ...rooms.value[idx], unreadCount: 0 }
-    rooms.value.splice(idx, 1, updated)
-    console.log('📭 방 입장 - unreadCount 0으로 설정:', room.roomId)
-  }
-  
-  messages.value = []
-  nextBeforeSeq.value = null
-  hasMoreMessages.value = true
-  isFirstLoad.value = true
-
-  if (roomSub) {
-    roomSub.unsubscribe()
-    roomSub = null
-  }
-
-  const subscriptionPath = `/topic/chat/room/${room.roomId}`
-  
-  try {
-    // ✅ 방 구독 시 헤더 추가
-    const subscribeHeaders = {
-      'Authorization': 'Bearer ' + accessToken.value
-    }
-    
-    roomSub = stompClient.subscribe(
-      subscriptionPath,
-      (message) => {
-        const chatMessage = JSON.parse(message.body)
-        console.log('📩 실시간 메시지:', chatMessage)
-        
-        messages.value.push(chatMessage)
-        nextTick(() => {
-          scrollToBottom()
-        })
-      },
-      subscribeHeaders
-    )
-    
-    console.log(`✅ 방 ${room.roomId} 구독 완료 (헤더 포함)`)
-  } catch (error) {
-    console.error('❌ 방 구독 실패:', error)
-    alert('채팅방 구독에 실패했습니다.')
-    return
-  }
-  
-  loadMessages(room.roomId)
 }
 
 const loadMessages = async (roomId, beforeSeq = null) => {
@@ -832,14 +670,10 @@ const loadMessages = async (roomId, beforeSeq = null) => {
     isLoadingMore.value = true
     
     let url = `${serverUrl.value}/v1/chat/rooms/${roomId}/messages?size=50`
-    if (beforeSeq) {
-      url += `&beforeSeq=${beforeSeq}`
-    }
+    if (beforeSeq) url += `&beforeSeq=${beforeSeq}`
 
     const response = await fetch(url, {
-      headers: {
-        'Authorization': 'Bearer ' + accessToken.value
-      }
+      headers: { 'Authorization': 'Bearer ' + accessToken.value }
     })
 
     if (response.ok) {
@@ -850,16 +684,12 @@ const loadMessages = async (roomId, beforeSeq = null) => {
       if (isFirstLoad.value) {
         messages.value = messageList
         isFirstLoad.value = false
-        nextTick(() => {
-          scrollToBottom()
-        })
+        nextTick(() => scrollToBottom())
       } else {
         const scrollHeight = messagesContainer.value.scrollHeight
         messages.value = [...messageList, ...messages.value]
-        
         nextTick(() => {
-          const newScrollHeight = messagesContainer.value.scrollHeight
-          messagesContainer.value.scrollTop = newScrollHeight - scrollHeight
+          messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight - scrollHeight
         })
       }
       
@@ -876,10 +706,7 @@ const loadMessages = async (roomId, beforeSeq = null) => {
 }
 
 const handleScroll = () => {
-  if (!messagesContainer.value || isLoadingMore.value || !hasMoreMessages.value) {
-    return
-  }
-  
+  if (!messagesContainer.value || isLoadingMore.value || !hasMoreMessages.value) return
   if (messagesContainer.value.scrollTop < 100) {
     loadMessages(currentRoomId.value, nextBeforeSeq.value)
   }
@@ -887,10 +714,7 @@ const handleScroll = () => {
 
 const sendMessage = () => {
   const content = messageInput.value.trim()
-
-  if (!content || !currentRoomId.value || !stompClient || !isConnected.value) {
-    return
-  }
+  if (!content || !currentRoomId.value || !stompClient || !isConnected.value) return
 
   const message = {
     roomId: currentRoomId.value,
@@ -903,16 +727,69 @@ const sendMessage = () => {
   }
 
   try {
-    stompClient.send(
-      `/publish/${currentRoomId.value}`,
-      JSON.stringify(message),
-      { 'content-type': 'application/json' }
-    )
-
+    stompClient.send(`/publish/${currentRoomId.value}`, JSON.stringify(message), { 'content-type': 'application/json' })
     messageInput.value = ''
   } catch (error) {
     console.error('❌ 메시지 전송 실패:', error)
-    alert('메시지 전송에 실패했습니다.')
+  }
+}
+
+const createPrivateRoom = async () => {
+  if (!otherMemberId.value || !accessToken.value) return
+
+  try {
+    const response = await fetch(`${serverUrl.value}/v1/chat/private?otherMemberId=${otherMemberId.value}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + accessToken.value
+      }
+    })
+
+    if (!response.ok) return
+    await loadRooms()
+  } catch (error) {
+    console.error('Error:', error)
+  }
+}
+
+const signup = async () => {
+  const form = signupForm.value
+  if (!form.name || !form.email || !form.password || !form.nickname || !form.phone) {
+    alert('모든 필드를 입력해주세요.')
+    return
+  }
+
+  try {
+    let url = `${serverUrl.value}/v1/auth/signup/${form.type}`
+    if (form.type === 'company') url += `/${form.companyId}`
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        nickname: form.nickname,
+        phone: form.phone
+      })
+    })
+
+    if (!response.ok) return
+
+    const responseData = await response.json()
+    const data = responseData.data
+    
+    accessToken.value = data.tokenInfo.accessToken
+    currentMemberId.value = data.memberInfo.memberId
+    email.value = form.email
+
+    alert('회원가입 성공!')
+    showSignupModal.value = false
+    await connectWebSocket()
+  } catch (error) {
+    console.error('회원가입 오류:', error)
   }
 }
 
@@ -928,8 +805,7 @@ const handleFileSelect = async (event) => {
   const file = event.target.files[0]
   if (!file) return
 
-  const maxSize = 10 * 1024 * 1024
-  if (file.size > maxSize) {
+  if (file.size > 10 * 1024 * 1024) {
     alert('파일 크기는 10MB를 초과할 수 없습니다.')
     return
   }
@@ -954,18 +830,12 @@ const handleFileSelect = async (event) => {
       fileSize: file.size
     }
 
-    stompClient.send(
-      `/publish/${currentRoomId.value}`,
-      JSON.stringify(message),
-      { 'content-type': 'application/json' }
-    )
-
+    stompClient.send(`/publish/${currentRoomId.value}`, JSON.stringify(message), { 'content-type': 'application/json' })
     messageInput.value = ''
     uploadProgress.value = 0
     event.target.value = ''
   } catch (error) {
     console.error('❌ 파일 전송 실패:', error)
-    alert('파일 전송에 실패했습니다.')
     uploadProgress.value = 0
   }
 }
@@ -978,38 +848,10 @@ const uploadFile = async (file) => {
       uploadProgress.value = progress
       if (progress >= 100) {
         clearInterval(interval)
-        const blobUrl = URL.createObjectURL(file)
-        resolve(blobUrl)
+        resolve(URL.createObjectURL(file))
       }
     }, 100)
   })
-}
-
-const leaveRoom = async () => {
-  if (!currentRoomId.value || !accessToken.value) return
-  if (!confirm('정말 이 채팅방을 나가시겠습니까?')) return
-
-  try {
-    const response = await fetch(`${serverUrl.value}/v1/chat/rooms/${currentRoomId.value}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': 'Bearer ' + accessToken.value }
-    })
-
-    if (response.ok) {
-      if (roomSub) {
-        roomSub.unsubscribe()
-        roomSub = null
-      }
-      
-      currentRoomId.value = null
-      currentRoomName.value = ''
-      messages.value = []
-      loadRooms()
-      alert('채팅방을 나갔습니다.')
-    }
-  } catch (error) {
-    console.error('Error:', error)
-  }
 }
 
 const scrollToBottom = () => {
@@ -1020,20 +862,12 @@ const scrollToBottom = () => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+  return new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
 
 const formatLastMessageTime = (timestamp) => {
   if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit'
-  })
+  return new Date(timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
 }
 
 const formatFileSize = (bytes) => {
@@ -1054,11 +888,17 @@ const openImageModal = (imageUrl) => {
   showImageModal.value = true
 }
 
+onBeforeUnmount(async () => {
+  if (currentRoomId.value) {
+    await markAsRead(currentRoomId.value)
+  }
+  disconnect()
+})
+
 onUnmounted(() => {
   disconnect()
 })
 </script>
 
 <style scoped>
-/* App.vue의 스코프 스타일은 전역 style.css를 사용하므로 비워둡니다 */
 </style>
